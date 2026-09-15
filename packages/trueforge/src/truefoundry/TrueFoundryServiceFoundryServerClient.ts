@@ -644,9 +644,12 @@ export class TrueFoundryServiceFoundryServerClient {
     });
     if (response.status === 401 || response.status === 403) {
       const detail = await readServiceFoundryErrorMessage(response);
-      throw new HTTPException(response.status, {
-        message: `TrueFoundry ServiceFoundry server rejected the request: ${detail ?? `HTTP ${String(response.status)}`}`,
-      });
+      const message = `TrueFoundry ServiceFoundry server rejected the request: ${detail ?? `HTTP ${String(response.status)}`}`;
+      // Service API key auth failures are server misconfiguration, not the caller's session.
+      if (input.accessToken === this.#apiKey) {
+        throw new HTTPException(500, { message });
+      }
+      throw new HTTPException(response.status, { message });
     }
     if (response.status === 404 && input.notFoundOk) {
       return undefined;
