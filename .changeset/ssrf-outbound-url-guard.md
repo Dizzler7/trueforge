@@ -3,4 +3,4 @@
 "@truefoundry/trueforge": patch
 ---
 
-Block RFC1918, link-local, and loopback destinations on outbound MCP and model-provider HTTP, with optional host allow/block lists.
+Block RFC1918, CGNAT, reserved, link-local, and loopback destinations on outbound MCP and model-provider HTTP, plus in-cluster hostnames, with optional host allow/block lists.

@@ -7,7 +7,7 @@ import type { CallToolRequest, CallToolResult } from '@modelcontextprotocol/sdk/
 import { context, propagation } from '@opentelemetry/api';
 import { McpConnectionError } from '../errors';
 import { withTimeout } from '../util/promiseUtils';
-import { assertSafeOutboundUrl, ssrfFetch } from '../util/ssrfGuard';
+import { ssrfFetch } from '../util/ssrfGuard';
 import type { ToolSchema } from './IMCPServer';
 
 /** Networking for remote (url-based) MCP servers, kept separate so it can be mocked in tests. */
@@ -152,11 +152,6 @@ export async function connectRemoteMcp(params: {
   onClose?: (() => void) | undefined;
   onError?: ((error: Error) => void) | undefined;
 }): Promise<RemoteMcpConnection> {
-  try {
-    await assertSafeOutboundUrl(params.url);
-  } catch (error) {
-    throw new McpConnectionError(error instanceof Error ? error.message : String(error), 400, { cause: error });
-  }
   const url = new URL(params.url);
   const requestOptions = { signal: params.signal };
   const candidates = params.knownTransportType

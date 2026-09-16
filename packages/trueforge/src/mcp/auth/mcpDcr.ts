@@ -13,7 +13,7 @@ import type {
   OAuthTokens,
 } from '@modelcontextprotocol/sdk/shared/auth.js';
 import type { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js';
-import { assertSafeOutboundUrl, McpConnectionError, McpDcrConfigurationError } from '@truefoundry/trueforge-core/core';
+import { McpConnectionError, McpDcrConfigurationError, ssrfFetch } from '@truefoundry/trueforge-core/core';
 import { randomBytes } from 'node:crypto';
 import {
   isOAuthAccessTokenUsable,
@@ -41,10 +41,9 @@ export const MCP_OAUTH_HTTP_TIMEOUT_MS = 15_000;
  * (startAuthorization is local PKCE + URL construction and never calls this).
  */
 const mcpOAuthFetch: FetchLike = async (url, init) => {
-  await assertSafeOutboundUrl(url);
   const timeoutSignal = AbortSignal.timeout(MCP_OAUTH_HTTP_TIMEOUT_MS);
   const signal = init?.signal != null ? AbortSignal.any([init.signal, timeoutSignal]) : timeoutSignal;
-  return fetch(url, { ...init, signal });
+  return ssrfFetch(url, { ...init, signal });
 };
 
 function isTimeoutError(error: unknown): boolean {
