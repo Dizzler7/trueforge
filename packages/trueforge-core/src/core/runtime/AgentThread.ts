@@ -506,6 +506,7 @@ export class AgentThread {
   private sandbox?: Sandbox | undefined;
   private readonly tracing: AgentTracing;
   private readonly logger: Logger;
+  private readonly mcpToolCallConcurrency: number;
 
   private metrics: AgentThreadMetrics = createEmptyAgentThreadMetrics();
   private tfyManagedServerNames = new Set<string>();
@@ -521,6 +522,7 @@ export class AgentThread {
   constructor(input: AgentThreadConstructorInput) {
     this.tracing = input.tracing;
     this.logger = input.logger.child({ module: 'AgentThread' });
+    this.mcpToolCallConcurrency = input.mcpToolCallConcurrency;
     this.threadId = input.threadId;
     this.definition = input.definition;
     this.context = input.context ? [...input.context] : [];
@@ -1174,6 +1176,7 @@ export class AgentThread {
       toolMapping,
       threadId: this.threadId,
       approvalDecisions: decisions,
+      concurrency: this.mcpToolCallConcurrency,
     });
     void clientSideToolCalls;
     if (approvalRequiredToolCalls.length > 0) {

@@ -5,6 +5,7 @@ import type { MCPAuthRequired } from '../mcp/IMCPServer';
 import type { AgentThreadCreateSubAgent } from '../runtime/AgentThread.types';
 import { InternalEventType } from '../runtime/AgentThread.types';
 import type { SandboxInfo } from '../sandbox/Sandbox';
+import { mapWithConcurrency } from '../util/promiseUtils';
 import type { MappedMCPTool } from './convertMCPServers';
 import {
   isApprovalRequiredResponse,
@@ -13,6 +14,13 @@ import {
   isClientSideToolRequiredResponse,
   toolResultResponse,
 } from './IMCPServer';
+
+/**
+ * Single default for callers and env `MCP_TOOL_CALL_CONCURRENCY`.
+ * Tool bodies sit in memory until LargeToolResponse truncates, so peak RAM is in-flight × largest body.
+ * 4 still covers typical 2–8 parallel calls without extra wait, and caps a 20+ dump instead of matching it.
+ */
+export const DEFAULT_MCP_TOOL_CALL_CONCURRENCY = 4;
 
 export interface ToolCallResult {
   message: LLMToolMessage;
@@ -42,11 +50,13 @@ export async function executeToolCalls({
   toolMapping,
   threadId,
   approvalDecisions,
+  concurrency,
 }: {
   assistantMessage: InternalEnrichedAssistantMessage;
   toolMapping: Map<string, MappedMCPTool>;
   threadId: string;
   approvalDecisions: Map<string, ApprovalDecision>;
+  concurrency: number;
 }): Promise<ExecuteToolCallsResult> {
   const toolMessages: ToolCallResult[] = [];
   const initializationInfo: MCPServerInitInfo[] = [];
@@ -70,7 +80,7 @@ export async function executeToolCalls({
     };
   }
 
-  const toolCallPromises = assistantMessage.tool_calls.map(async toolCall => {
+  const results = await mapWithConcurrency(assistantMessage.tool_calls, concurrency, async toolCall => {
     const toolInfo = toolMapping.get(toolCall.function.name);
     if (!toolInfo) {
       return {
@@ -105,8 +115,6 @@ export async function executeToolCalls({
       };
     }
   });
-
-  const results = await Promise.all(toolCallPromises);
   for (const { toolCall, toolInfo, response, failure, completedAt } of results) {
     if (isCallToolResponseCreateSubAgent(response)) {
       createThreadEvents.push({
