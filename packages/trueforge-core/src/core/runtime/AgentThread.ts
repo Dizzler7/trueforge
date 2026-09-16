@@ -1148,6 +1148,7 @@ export class AgentThread {
 
   private async *stepToolResponse(
     toolMapping: Map<string, MappedMCPTool>,
+    signal?: AbortSignal,
   ): AsyncGenerator<AgentThreadEvent, StepOutcome, unknown> {
     const assistantMessage = lastAssistantInContext(this.context);
     if (!assistantMessage) {
@@ -1177,6 +1178,7 @@ export class AgentThread {
       threadId: this.threadId,
       approvalDecisions: decisions,
       concurrency: this.mcpToolCallConcurrency,
+      signal,
     });
     void clientSideToolCalls;
     if (approvalRequiredToolCalls.length > 0) {
@@ -1379,7 +1381,7 @@ export class AgentThread {
             if (signal?.aborted) {
               return;
             }
-            outcome = yield* this.stepToolResponse(toolMapping);
+            outcome = yield* this.stepToolResponse(toolMapping, signal);
             break;
           }
           case 'user-input-required': {
@@ -1392,7 +1394,10 @@ export class AgentThread {
             throw new Error('unreachable');
           }
         }
-        if (outcome === 'exit') {
+        // After a step, abort must return before the next deriveState().
+        // A partial tool batch leaves open calls; tool-response-required → tool-response-required is invalid.
+        // Do not check at the top of the loop: user-input-required must still emit.
+        if (outcome === 'exit' || signal?.aborted) {
           return;
         }
       }

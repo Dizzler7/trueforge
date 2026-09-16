@@ -51,12 +51,14 @@ export async function executeToolCalls({
   threadId,
   approvalDecisions,
   concurrency,
+  signal,
 }: {
   assistantMessage: InternalEnrichedAssistantMessage;
   toolMapping: Map<string, MappedMCPTool>;
   threadId: string;
   approvalDecisions: Map<string, ApprovalDecision>;
   concurrency: number;
+  signal?: AbortSignal | undefined;
 }): Promise<ExecuteToolCallsResult> {
   const toolMessages: ToolCallResult[] = [];
   const initializationInfo: MCPServerInitInfo[] = [];
@@ -80,41 +82,52 @@ export async function executeToolCalls({
     };
   }
 
-  const results = await mapWithConcurrency(assistantMessage.tool_calls, concurrency, async toolCall => {
-    const toolInfo = toolMapping.get(toolCall.function.name);
-    if (!toolInfo) {
-      return {
-        toolCall,
-        toolInfo,
-        response: toolResultResponse({ text: `Tool ${toolCall.function.name} not found in tool mapping` }),
-        failure: true,
-        completedAt: new Date().toISOString(),
-      };
-    }
+  // After cancel, workers stop taking new tool calls from the queue.
+  // Do not throw: calls already in flight may still finish and those results are kept.
+  // AgentThread.execute() then returns on abort so deriveState() does not see leftover open tool calls.
+  const results = await mapWithConcurrency(
+    assistantMessage.tool_calls,
+    concurrency,
+    async toolCall => {
+      const toolInfo = toolMapping.get(toolCall.function.name);
+      if (!toolInfo) {
+        return {
+          toolCall,
+          toolInfo,
+          response: toolResultResponse({ text: `Tool ${toolCall.function.name} not found in tool mapping` }),
+          failure: true,
+          completedAt: new Date().toISOString(),
+        };
+      }
 
-    try {
-      const args: Record<string, unknown> = JSON.parse(toolCall.function.arguments || '{}') as Record<string, unknown>;
-      const response = await toolInfo.toolSet.callTool(
-        {
-          name: toolInfo.originalToolName,
-          arguments: args,
-        },
-        approvalDecisions.get(toolCall.id),
-      );
-      return { toolCall, toolInfo, response, failure: false, completedAt: new Date().toISOString() };
-    } catch (error) {
-      return {
-        toolCall,
-        toolInfo,
-        response: toolResultResponse({
-          text: JSON.stringify({ error: error instanceof Error ? error.message : 'Tool execution failed' }),
-          isError: true,
-        }),
-        failure: true,
-        completedAt: new Date().toISOString(),
-      };
-    }
-  });
+      try {
+        const args: Record<string, unknown> = JSON.parse(toolCall.function.arguments || '{}') as Record<
+          string,
+          unknown
+        >;
+        const response = await toolInfo.toolSet.callTool(
+          {
+            name: toolInfo.originalToolName,
+            arguments: args,
+          },
+          approvalDecisions.get(toolCall.id),
+        );
+        return { toolCall, toolInfo, response, failure: false, completedAt: new Date().toISOString() };
+      } catch (error) {
+        return {
+          toolCall,
+          toolInfo,
+          response: toolResultResponse({
+            text: JSON.stringify({ error: error instanceof Error ? error.message : 'Tool execution failed' }),
+            isError: true,
+          }),
+          failure: true,
+          completedAt: new Date().toISOString(),
+        };
+      }
+    },
+    signal,
+  );
   for (const { toolCall, toolInfo, response, failure, completedAt } of results) {
     if (isCallToolResponseCreateSubAgent(response)) {
       createThreadEvents.push({

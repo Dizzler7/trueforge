@@ -69,6 +69,7 @@ export async function mapWithConcurrency<T, R>(
   items: readonly T[],
   concurrency: number,
   fn: (item: T, index: number) => Promise<R>,
+  signal?: AbortSignal,
 ): Promise<R[]> {
   if (items.length === 0) {
     return [];
@@ -80,6 +81,9 @@ export async function mapWithConcurrency<T, R>(
 
   const worker = async (): Promise<void> => {
     while (nextIndex < items.length) {
+      if (signal?.aborted) {
+        return;
+      }
       const index = nextIndex;
       nextIndex += 1;
       const item = items[index];
