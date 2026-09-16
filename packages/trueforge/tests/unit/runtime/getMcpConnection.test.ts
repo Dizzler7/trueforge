@@ -1,3 +1,4 @@
+import { configureOutboundUrlGuard } from '@truefoundry/trueforge-core/core';
 import { STANDALONE_REQUEST_CONTEXT } from '../../../src/auth/identity';
 import { McpServerWithAuthStore } from '../../../src/db/McpServerWithAuthStore';
 import type { IMcpServerWithAuthStore } from '../../../src/db/mcpServerStore';
@@ -14,6 +15,10 @@ describe('getMcpConnection', () => {
   let tokenStore: SqliteOAuthTokenStore;
 
   beforeAll(async () => {
+    configureOutboundUrlGuard({
+      allowedHosts: ['auth.example.com', 'mcp.oauth.example'],
+      blockedHosts: [],
+    });
     db = createSqliteDb(':memory:');
     await migrateSqliteToLatest(db);
     tokenStore = new SqliteOAuthTokenStore(db);
@@ -258,5 +263,9 @@ describe('getMcpConnection', () => {
         userRef: STANDALONE_REQUEST_CONTEXT.subject.id,
       }),
     ).resolves.toBeUndefined();
+  });
+
+  afterAll(() => {
+    configureOutboundUrlGuard({ allowedHosts: [], blockedHosts: [] });
   });
 });

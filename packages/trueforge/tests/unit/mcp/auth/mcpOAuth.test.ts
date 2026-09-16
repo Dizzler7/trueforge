@@ -3,6 +3,7 @@
  * Global fetch is stubbed; production code uses real fetch only.
  */
 import { resourceUrlFromServerUrl } from '@modelcontextprotocol/sdk/shared/auth-utils.js';
+import { configureOutboundUrlGuard } from '@truefoundry/trueforge-core/core';
 import { InMemoryOAuthClientStore, InMemoryOAuthTokenStore } from '../../../../src/mcp/auth/inMemoryStores';
 import {
   buildMcpAuthorizationUrl,
@@ -34,7 +35,15 @@ const USER_REF = 'user-a';
 
 const realFetch = globalThis.fetch;
 
+beforeEach(() => {
+  configureOutboundUrlGuard({
+    allowedHosts: ['mcp.example.com', 'auth.example.com'],
+    blockedHosts: [],
+  });
+});
+
 afterEach(() => {
+  configureOutboundUrlGuard({ allowedHosts: [], blockedHosts: [] });
   globalThis.fetch = realFetch;
 });
 

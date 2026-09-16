@@ -2,6 +2,7 @@
  * Authorize + OAuth callback against real sqlite stores with fetch stubbed
  * (same pattern as the server MCP OAuth helper tests).
  */
+import { configureOutboundUrlGuard } from '@truefoundry/trueforge-core/core';
 import winston from 'winston';
 import { createMcpOAuthRouter } from '../../../src/apis/mcpOAuth';
 import { createMcpServersRouter, createSettingsMcpServersRouter } from '../../../src/apis/mcpServers';
@@ -84,6 +85,10 @@ describe('MCP OAuth authorize + callback', () => {
   let logger: ReturnType<typeof winston.createLogger>;
 
   beforeAll(async () => {
+    configureOutboundUrlGuard({
+      allowedHosts: ['mcp.example.com', 'auth.example.com'],
+      blockedHosts: [],
+    });
     const db = createSqliteDb(':memory:');
     await migrateSqliteToLatest(db);
     tokenStore = new SqliteOAuthTokenStore(db);
@@ -121,6 +126,10 @@ describe('MCP OAuth authorize + callback', () => {
 
   afterEach(() => {
     globalThis.fetch = realFetch;
+  });
+
+  afterAll(() => {
+    configureOutboundUrlGuard({ allowedHosts: [], blockedHosts: [] });
   });
 
   /** Registers a dcr server and authorizes it, returning the pending authorization's `state`. */

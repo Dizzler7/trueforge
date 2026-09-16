@@ -571,6 +571,10 @@ export interface SharedServerConfiguration {
    * `TRUEFORGE_MTLS_ENABLED` is true. Env: `TRUEFORGE_MTLS_CERTS_DIR`. Default `/etc/tls`.
    */
   TRUEFORGE_MTLS_CERTS_DIR: string;
+  /** Hosts that may be private. Env: `OUTBOUND_URL_ALLOW_PRIVATE_HOSTS`. Empty = none. */
+  OUTBOUND_URL_ALLOW_PRIVATE_HOSTS: string[];
+  /** Hosts always blocked. Env: `OUTBOUND_URL_BLOCKED_HOSTS`. Empty = none. */
+  OUTBOUND_URL_BLOCKED_HOSTS: string[];
 }
 
 export type StandaloneServerConfiguration = SharedServerConfiguration & {
@@ -801,6 +805,8 @@ const shared: SharedServerConfiguration = {
     defaultValue: false,
   }),
   TRUEFORGE_MTLS_CERTS_DIR: getEnv('TRUEFORGE_MTLS_CERTS_DIR', { defaultValue: '/etc/tls' }) ?? '/etc/tls',
+  OUTBOUND_URL_ALLOW_PRIVATE_HOSTS: parseCommaSeparatedEnvList(getEnv('OUTBOUND_URL_ALLOW_PRIVATE_HOSTS')),
+  OUTBOUND_URL_BLOCKED_HOSTS: parseCommaSeparatedEnvList(getEnv('OUTBOUND_URL_BLOCKED_HOSTS')),
 };
 
 const configuration: ServerConfiguration = standalone

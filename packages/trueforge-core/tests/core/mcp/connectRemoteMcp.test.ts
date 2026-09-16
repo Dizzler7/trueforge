@@ -59,7 +59,7 @@ jest.mock('@modelcontextprotocol/sdk/client/sse.js', () => ({
 }));
 
 const baseParams = () => ({
-  url: 'https://mcp.example.com/mcp',
+  url: 'https://93.184.216.34/mcp',
   headers: {},
   requestTimeoutMs: 60_000,
   connectTimeoutMs: 5_000,
@@ -136,5 +136,23 @@ describe('connectRemoteMcp transport selection', () => {
     ).rejects.toMatchObject({ constructor: McpConnectionError });
     // Session-expiry short-circuits: no fallback to sse with a stale session.
     expect(mockConnectAttempts).toEqual(['streamable-http']);
+  });
+});
+
+describe('connectRemoteMcp SSRF guard', () => {
+  beforeEach(() => {
+    mockConnectAttempts.length = 0;
+  });
+
+  it('rejects loopback and link-local URLs before opening a transport', async () => {
+    await expect(connectRemoteMcp({ ...baseParams(), url: 'http://127.0.0.1:6379' })).rejects.toMatchObject({
+      constructor: McpConnectionError,
+      statusCode: 400,
+    });
+    await expect(connectRemoteMcp({ ...baseParams(), url: 'http://169.254.169.254/' })).rejects.toMatchObject({
+      constructor: McpConnectionError,
+      statusCode: 400,
+    });
+    expect(mockConnectAttempts).toEqual([]);
   });
 });

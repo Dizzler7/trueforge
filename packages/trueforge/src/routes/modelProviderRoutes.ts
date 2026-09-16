@@ -60,7 +60,7 @@ export const createModelProviderRoute = createRoute({
     },
     400: {
       content: { 'application/json': { schema: RequestErrorResponseSchema } },
-      description: 'Invalid request body, or redacted API key with no stored secret to keep.',
+      description: 'Invalid request body, blocked outbound URL, or redacted API key with no stored secret to keep.',
     },
     409: {
       content: { 'application/json': { schema: RequestErrorResponseSchema } },
@@ -96,7 +96,7 @@ export const putModelProviderRoute = createRoute({
     },
     400: {
       content: { 'application/json': { schema: RequestErrorResponseSchema } },
-      description: 'Invalid request body, or redacted API key with no stored secret to keep.',
+      description: 'Invalid request body, blocked outbound URL, or redacted API key with no stored secret to keep.',
     },
     424: {
       content: { 'application/json': { schema: RequestErrorResponseSchema } },

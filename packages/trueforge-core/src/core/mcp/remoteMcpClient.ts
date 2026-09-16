@@ -7,6 +7,7 @@ import type { CallToolRequest, CallToolResult } from '@modelcontextprotocol/sdk/
 import { context, propagation } from '@opentelemetry/api';
 import { McpConnectionError } from '../errors';
 import { withTimeout } from '../util/promiseUtils';
+import { assertSafeOutboundUrl, ssrfFetch } from '../util/ssrfGuard';
 import type { ToolSchema } from './IMCPServer';
 
 /** Networking for remote (url-based) MCP servers, kept separate so it can be mocked in tests. */
@@ -50,10 +51,14 @@ function createTransport(
 ): McpTransport {
   const requestInit = { headers };
   if (type === 'streamable-http') {
-    return new StreamableHTTPClientTransport(url, { requestInit, ...(sessionId !== undefined ? { sessionId } : {}) });
+    return new StreamableHTTPClientTransport(url, {
+      requestInit,
+      fetch: ssrfFetch,
+      ...(sessionId !== undefined ? { sessionId } : {}),
+    });
   }
   // eslint-disable-next-line @typescript-eslint/no-deprecated -- dual-transport probe; see TRANSPORT_PROBE_ORDER
-  return new SSEClientTransport(url, { requestInit });
+  return new SSEClientTransport(url, { requestInit, fetch: ssrfFetch });
 }
 
 export function isSessionExpiredError(error: unknown): boolean {
@@ -147,6 +152,11 @@ export async function connectRemoteMcp(params: {
   onClose?: (() => void) | undefined;
   onError?: ((error: Error) => void) | undefined;
 }): Promise<RemoteMcpConnection> {
+  try {
+    await assertSafeOutboundUrl(params.url);
+  } catch (error) {
+    throw new McpConnectionError(error instanceof Error ? error.message : String(error), 400, { cause: error });
+  }
   const url = new URL(params.url);
   const requestOptions = { signal: params.signal };
   const candidates = params.knownTransportType

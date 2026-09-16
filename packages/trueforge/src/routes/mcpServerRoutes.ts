@@ -135,7 +135,8 @@ export const createMcpServerRoute = createRoute({
     },
     400: {
       content: { 'application/json': { schema: RequestErrorResponseSchema } },
-      description: 'Invalid request body, or redacted header secret with no stored value to keep.',
+      description:
+        'Invalid request body, blocked outbound URL, or redacted header secret with no stored value to keep.',
     },
     409: {
       content: { 'application/json': { schema: RequestErrorResponseSchema } },
@@ -174,7 +175,8 @@ export const putMcpServerRoute = createRoute({
     },
     400: {
       content: { 'application/json': { schema: RequestErrorResponseSchema } },
-      description: 'Invalid request body, or redacted header secret with no stored value to keep.',
+      description:
+        'Invalid request body, blocked outbound URL, or redacted header secret with no stored value to keep.',
     },
     422: {
       content: { 'application/json': { schema: RequestErrorResponseSchema } },
