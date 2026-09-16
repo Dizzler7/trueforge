@@ -73,6 +73,7 @@ const MAX_REDIRECTS = 20;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const CROSS_ORIGIN_STRIPPED_HEADERS = ['authorization', 'proxy-authorization', 'cookie', 'host'];
 
+/** Allow `localhost` / `foo.svc.cluster.local`; block `93.184.216.34`. Hosts run through `normalizeHost`. */
 export function configureOutboundUrlGuard(config: {
   allowedHosts: readonly string[];
   blockedHosts: readonly string[];
@@ -81,10 +82,13 @@ export function configureOutboundUrlGuard(config: {
   blockedHosts = config.blockedHosts.map(normalizeHost);
 }
 
+/** `Example.COM.` → `example.com`; `[2606:4700:4700::1111]` → `2606:4700:4700::1111` (`isIP` rejects brackets). */
 function normalizeHost(hostname: string): string {
-  return hostname.replace(/\.$/, '').toLowerCase();
+  const host = hostname.replace(/\.$/, '').toLowerCase();
+  return host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
 }
 
+/** `10.0.0.1` / `::1` / `::ffff:127.0.0.1` true; `93.184.216.34` / `2606:4700:4700::1111` false. */
 function isPrivateIp(address: string): boolean {
   const ip = address.replace(/^::ffff:/i, '');
   if (isIP(ip) === 4) {
@@ -104,7 +108,7 @@ function deny(host: string, cause?: unknown): never {
   throw blockedError(host, cause);
 }
 
-/** Block/allow lists, k8s hostname shapes, IP literals. Hostname DNS is classified in `guardedLookup`. */
+/** Deny `redis`, `foo.svc`, `127.0.0.1`, `::1`; allow `example.com`, `93.184.216.34`, `2606:4700:4700::1111`. DNS later. */
 function assertHost(host: string): void {
   if (host === '' || blockedHosts.includes(host)) {
     deny(host);
@@ -127,6 +131,7 @@ function assertHost(host: string): void {
   }
 }
 
+/** `https://example.com` / `http://[2606:4700:4700::1111]/` ok; `file:///etc/passwd` / `ftp://…` denied. */
 function parseOutboundUrl(input: string | URL | Request): URL {
   let url: URL;
   try {
@@ -140,9 +145,7 @@ function parseOutboundUrl(input: string | URL | Request): URL {
   return url;
 }
 
-/**
- * undici runs this as the socket lookup, so the addresses we allow are the ones connected to.
- */
+/** Connect-time lookup: `example.com` → public A/AAAA ok; resolve-to-`10.0.0.1` denied. */
 const guardedLookup: LookupFunction = (hostname, options: LookupOptions, callback) => {
   const host = normalizeHost(hostname);
   try {
@@ -176,6 +179,7 @@ const guardedLookup: LookupFunction = (hostname, options: LookupOptions, callbac
 
 const outboundAgent = new Agent({ connect: { lookup: guardedLookup } });
 
+/** Save/preflight: `https://[2606:4700:4700::1111]/` allow; `http://169.254.169.254/` deny. */
 export async function assertSafeOutboundUrl(input: string | URL | Request): Promise<void> {
   const url = parseOutboundUrl(input);
   const host = normalizeHost(url.hostname);
@@ -194,6 +198,7 @@ export async function assertSafeOutboundUrl(input: string | URL | Request): Prom
   }
 }
 
+/** 302 `/to` same-origin keep; 302 `http://169.254.169.254/` is re-checked on the next hop. */
 function nextHop(
   response: Response,
   location: string,
@@ -265,6 +270,7 @@ async function guardedFetch(input: string | URL | Request, init: RequestInit, ho
   return guardedFetch(hop.url, hop.init, hopsLeft - 1);
 }
 
+/** Fetch via the guard: `https://example.com` proceeds; `http://169.254.169.254/` throws before fetch. */
 export async function ssrfFetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
   return guardedFetch(input, init ?? {}, MAX_REDIRECTS);
 }

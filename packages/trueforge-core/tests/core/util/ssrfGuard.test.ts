@@ -38,7 +38,6 @@ describe('assertSafeOutboundUrl', () => {
     await expect(assertSafeOutboundUrl('http://224.0.0.1/')).rejects.toThrow(/blocked/);
     await expect(assertSafeOutboundUrl('http://[::1]/')).rejects.toThrow(/blocked/);
     await expect(assertSafeOutboundUrl('http://[2001:db8::1]/')).rejects.toThrow(/blocked/);
-    await expect(assertSafeOutboundUrl('https://[2606:4700:4700::1111]/')).rejects.toThrow(/blocked/);
   });
 
   it('rejects single-label and in-cluster hostnames before DNS', async () => {
@@ -47,9 +46,10 @@ describe('assertSafeOutboundUrl', () => {
     await expect(assertSafeOutboundUrl('https://metadata.google.internal/')).rejects.toThrow(/blocked/);
   });
 
-  it('rejects non-http(s) and allows a public IPv4 literal', async () => {
+  it('rejects non-http(s) and allows public IPv4 and IPv6 literals', async () => {
     await expect(assertSafeOutboundUrl('file:///etc/passwd')).rejects.toThrow(/http and https/);
     await expect(assertSafeOutboundUrl('https://93.184.216.34/')).resolves.toBeUndefined();
+    await expect(assertSafeOutboundUrl('https://[2606:4700:4700::1111]/')).resolves.toBeUndefined();
   });
 
   it('honors allow and block lists', async () => {
