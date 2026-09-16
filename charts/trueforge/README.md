@@ -269,6 +269,7 @@ configs:
     # Optional email allowlist (exact + * globs). Empty = unrestricted.
     # allowedEmails: "alice@acme.com,*@partner.com"
   outboundUrl:
+    # enabled: true
     # Optional. Empty = deny private/loopback/link-local MCP and model-provider URLs.
     # allowPrivateHosts: "llm-gateway.internal,localhost"
     # blockedHosts: ""

@@ -6,6 +6,7 @@ import { Agent, fetch as undiciFetch } from 'undici';
 
 let allowedHosts: string[] = [];
 let blockedHosts: string[] = [];
+let guardEnabled = true;
 
 const URL_VERIFY = {
   allowedProtocols: ['http:', 'https:'],
@@ -40,7 +41,6 @@ const URL_VERIFY = {
     'fe80::/10', // link-local
     'ff00::/8', // multicast
   ],
-  denyHostsExact: ['localhost', 'metadata', 'instance-data', 'metadata.google.internal'],
   denyHostSuffixes: [
     '.local',
     '.localhost',
@@ -73,22 +73,21 @@ const MAX_REDIRECTS = 20;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const CROSS_ORIGIN_STRIPPED_HEADERS = ['authorization', 'proxy-authorization', 'cookie', 'host'];
 
-/** Allow `localhost` / `foo.svc.cluster.local`; block `93.184.216.34`. Hosts run through `normalizeHost`. */
 export function configureOutboundUrlGuard(config: {
+  enabled?: boolean;
   allowedHosts: readonly string[];
   blockedHosts: readonly string[];
 }): void {
+  guardEnabled = config.enabled ?? true;
   allowedHosts = config.allowedHosts.map(normalizeHost);
   blockedHosts = config.blockedHosts.map(normalizeHost);
 }
 
-/** `Example.COM.` → `example.com`; `[2606:4700:4700::1111]` → `2606:4700:4700::1111` (`isIP` rejects brackets). */
 function normalizeHost(hostname: string): string {
   const host = hostname.replace(/\.$/, '').toLowerCase();
   return host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
 }
 
-/** `10.0.0.1` / `::1` / `::ffff:127.0.0.1` true; `93.184.216.34` / `2606:4700:4700::1111` false. */
 function isPrivateIp(address: string): boolean {
   const ip = address.replace(/^::ffff:/i, '');
   if (isIP(ip) === 4) {
@@ -108,7 +107,6 @@ function deny(host: string, cause?: unknown): never {
   throw blockedError(host, cause);
 }
 
-/** Deny `redis`, `foo.svc`, `127.0.0.1`, `::1`; allow `example.com`, `93.184.216.34`, `2606:4700:4700::1111`. DNS later. */
 function assertHost(host: string): void {
   if (host === '' || blockedHosts.includes(host)) {
     deny(host);
@@ -117,11 +115,7 @@ function assertHost(host: string): void {
     return;
   }
   if (isIP(host) === 0) {
-    if (
-      !host.includes('.') ||
-      URL_VERIFY.denyHostsExact.includes(host) ||
-      URL_VERIFY.denyHostSuffixes.some(suffix => host.endsWith(suffix))
-    ) {
+    if (!host.includes('.') || URL_VERIFY.denyHostSuffixes.some(suffix => host.endsWith(suffix))) {
       deny(host);
     }
     return;
@@ -131,7 +125,6 @@ function assertHost(host: string): void {
   }
 }
 
-/** `https://example.com` / `http://[2606:4700:4700::1111]/` ok; `file:///etc/passwd` / `ftp://…` denied. */
 function parseOutboundUrl(input: string | URL | Request): URL {
   let url: URL;
   try {
@@ -145,8 +138,12 @@ function parseOutboundUrl(input: string | URL | Request): URL {
   return url;
 }
 
-/** Connect-time lookup: `example.com` → public A/AAAA ok; resolve-to-`10.0.0.1` denied. */
+/** undici runs this as the socket lookup, so the addresses we allow are the ones connected to. */
 const guardedLookup: LookupFunction = (hostname, options: LookupOptions, callback) => {
+  if (!guardEnabled) {
+    dnsLookup(hostname, options, callback);
+    return;
+  }
   const host = normalizeHost(hostname);
   try {
     assertHost(host);
@@ -185,9 +182,11 @@ const outboundAgent = new Agent({
   connect: { lookup: guardedLookup },
 });
 
-/** Save/preflight: `https://[2606:4700:4700::1111]/` allow; `http://169.254.169.254/` deny. */
 export async function assertSafeOutboundUrl(input: string | URL | Request): Promise<void> {
   const url = parseOutboundUrl(input);
+  if (!guardEnabled) {
+    return;
+  }
   const host = normalizeHost(url.hostname);
   assertHost(host);
   if (allowedHosts.includes(host) || isIP(host) !== 0) {
@@ -204,7 +203,6 @@ export async function assertSafeOutboundUrl(input: string | URL | Request): Prom
   }
 }
 
-/** 302 `/to` same-origin keep; 302 `http://169.254.169.254/` is re-checked on the next hop. */
 function nextHop(
   response: Response,
   location: string,
@@ -260,10 +258,12 @@ function mergeRequestInit(input: string | URL | Request, init: RequestInit): Req
 
 async function guardedFetch(input: string | URL | Request, init: RequestInit, hopsLeft: number): Promise<Response> {
   const url = parseOutboundUrl(input);
-  assertHost(normalizeHost(url.hostname));
+  if (guardEnabled) {
+    assertHost(normalizeHost(url.hostname));
+  }
   const merged = mergeRequestInit(input, init);
   const redirect = merged.redirect ?? 'follow';
-  const followsRedirects = redirect === 'follow';
+  const followsRedirects = guardEnabled && redirect === 'follow';
   const requestInit = {
     redirect: followsRedirects ? 'manual' : redirect,
     dispatcher: outboundAgent,
@@ -295,7 +295,6 @@ async function guardedFetch(input: string | URL | Request, init: RequestInit, ho
   return guardedFetch(hop.url, hop.init, hopsLeft - 1);
 }
 
-/** Fetch via the guard: `https://example.com` proceeds; `http://169.254.169.254/` throws before fetch. */
 export async function ssrfFetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
   return guardedFetch(input, init ?? {}, MAX_REDIRECTS);
 }

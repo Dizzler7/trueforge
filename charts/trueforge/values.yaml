@@ -133,6 +133,8 @@ configs:
     # Empty = unrestricted. Matched against the ID token `email` claim.
     allowedEmails: ""
   outboundUrl:
+    # Env: ENABLE_SSRF. Default true. Set false to skip the outbound URL guard.
+    enabled: true
     # Comma-separated hosts allowed even if private. Empty = none. Env: OUTBOUND_URL_ALLOW_PRIVATE_HOSTS.
     allowPrivateHosts: ""
     # Comma-separated hosts always blocked. Empty = none. Env: OUTBOUND_URL_BLOCKED_HOSTS.

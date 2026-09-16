@@ -61,6 +61,12 @@ describe('assertSafeOutboundUrl', () => {
     await expect(assertSafeOutboundUrl('http://foo.svc.cluster.local/mcp')).resolves.toBeUndefined();
     await expect(assertSafeOutboundUrl('https://93.184.216.34/')).rejects.toThrow(/blocked/);
   });
+
+  it('skips the guard when disabled', async () => {
+    configureOutboundUrlGuard({ enabled: false, allowedHosts: [], blockedHosts: [] });
+    await expect(assertSafeOutboundUrl('http://127.0.0.1:6379/')).resolves.toBeUndefined();
+    await expect(assertSafeOutboundUrl('http://redis/')).resolves.toBeUndefined();
+  });
 });
 
 describe('ssrfFetch', () => {
