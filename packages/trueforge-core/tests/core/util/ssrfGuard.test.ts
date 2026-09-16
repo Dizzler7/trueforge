@@ -103,4 +103,41 @@ describe('ssrfFetch', () => {
       await closeServer(server);
     }
   });
+
+  it('keeps method, headers, and body from a Request argument', async () => {
+    configureOutboundUrlGuard({ allowedHosts: ['127.0.0.1'], blockedHosts: [] });
+    const { server, origin } = await listen((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', chunk => {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      });
+      req.on('end', () => {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            method: req.method,
+            authorization: req.headers.authorization ?? null,
+            body: Buffer.concat(chunks).toString('utf8'),
+          }),
+        );
+      });
+    });
+    try {
+      const response = await ssrfFetch(
+        new Request(`${origin}/echo`, {
+          method: 'POST',
+          headers: { authorization: 'Bearer t', 'content-type': 'text/plain' },
+          body: 'hello',
+        }),
+      );
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({
+        method: 'POST',
+        authorization: 'Bearer t',
+        body: 'hello',
+      });
+    } finally {
+      await closeServer(server);
+    }
+  });
 });

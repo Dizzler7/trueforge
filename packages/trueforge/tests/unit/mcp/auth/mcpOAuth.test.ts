@@ -1,7 +1,18 @@
 /**
  * MCP OAuth / DCR helper tests (node:test style via jest).
- * Global fetch is stubbed; production code uses real fetch only.
+ * Global fetch is stubbed; production ssrfFetch uses undici, so undici.fetch forwards here.
  */
+jest.mock('undici', () => {
+  const actual = jest.requireActual<typeof import('undici')>('undici');
+  return {
+    ...actual,
+    fetch: (input: unknown, init?: RequestInit) => {
+      const url = input instanceof Request ? input.url : String(input);
+      return globalThis.fetch(url, init);
+    },
+  };
+});
+
 import { resourceUrlFromServerUrl } from '@modelcontextprotocol/sdk/shared/auth-utils.js';
 import { configureOutboundUrlGuard } from '@truefoundry/trueforge-core/core';
 import { InMemoryOAuthClientStore, InMemoryOAuthTokenStore } from '../../../../src/mcp/auth/inMemoryStores';

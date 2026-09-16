@@ -2,7 +2,7 @@ import type { LookupAllOptions, LookupOptions } from 'node:dns';
 import { lookup as dnsLookup } from 'node:dns';
 import { lookup as dnsLookupAsync } from 'node:dns/promises';
 import { BlockList, isIP, type LookupFunction } from 'node:net';
-import { Agent } from 'undici';
+import { Agent, fetch as undiciFetch } from 'undici';
 
 let allowedHosts: string[] = [];
 let blockedHosts: string[] = [];
@@ -177,7 +177,13 @@ const guardedLookup: LookupFunction = (hostname, options: LookupOptions, callbac
   });
 };
 
-const outboundAgent = new Agent({ connect: { lookup: guardedLookup } });
+const BODY_TIMEOUT_MS = 30 * 60 * 1000;
+
+const outboundAgent = new Agent({
+  // MCP SSE/streamable-HTTP stays idle between tool calls; undici's 300s bodyTimeout kills it.
+  bodyTimeout: BODY_TIMEOUT_MS,
+  connect: { lookup: guardedLookup },
+});
 
 /** Save/preflight: `https://[2606:4700:4700::1111]/` allow; `http://169.254.169.254/` deny. */
 export async function assertSafeOutboundUrl(input: string | URL | Request): Promise<void> {
@@ -203,7 +209,6 @@ function nextHop(
   response: Response,
   location: string,
   current: URL,
-  input: string | URL | Request,
   init: RequestInit,
 ): { url: URL; init: RequestInit } {
   let nextUrl: URL;
@@ -216,9 +221,8 @@ function nextHop(
     throw new Error('Outbound URL blocked: only http and https are allowed');
   }
 
-  const request = input instanceof Request ? input : undefined;
-  const headers = new Headers(init.headers ?? request?.headers);
-  let method = (init.method ?? request?.method ?? 'GET').toUpperCase();
+  const headers = new Headers(init.headers);
+  let method = (init.method ?? 'GET').toUpperCase();
   let body = init.body ?? null;
   const downgradesToGet =
     ((response.status === 301 || response.status === 302) && method === 'POST') ||
@@ -240,18 +244,39 @@ function nextHop(
   return { url: nextUrl, init: { ...init, method, headers, body } };
 }
 
+function mergeRequestInit(input: string | URL | Request, init: RequestInit): RequestInit {
+  if (!(input instanceof Request)) {
+    return init;
+  }
+  return {
+    method: input.method,
+    headers: input.headers,
+    body: input.body,
+    signal: input.signal,
+    redirect: input.redirect,
+    ...init,
+  };
+}
+
 async function guardedFetch(input: string | URL | Request, init: RequestInit, hopsLeft: number): Promise<Response> {
   const url = parseOutboundUrl(input);
   assertHost(normalizeHost(url.hostname));
-  const redirect = init.redirect ?? 'follow';
+  const merged = mergeRequestInit(input, init);
+  const redirect = merged.redirect ?? 'follow';
   const followsRedirects = redirect === 'follow';
-  const requestInit: RequestInit = {
-    ...init,
+  const requestInit = {
     redirect: followsRedirects ? 'manual' : redirect,
+    dispatcher: outboundAgent,
   };
-  // Agent vs undici-types Dispatcher: attach at runtime so fetch still uses this lookup.
-  Object.assign(requestInit, { dispatcher: outboundAgent });
-  const response = await fetch(url.href, requestInit);
+  // npm undici vs @types/node undici-types: FormData/Headers do not line up under exactOptionalPropertyTypes.
+  Object.assign(requestInit, merged, {
+    redirect: followsRedirects ? 'manual' : redirect,
+    dispatcher: outboundAgent,
+    ...(merged.body != null && typeof merged.body === 'object' && 'getReader' in merged.body
+      ? { duplex: 'half' as const }
+      : {}),
+  });
+  const response = await undiciFetch(url.href, requestInit);
   if (!followsRedirects) {
     return response;
   }
@@ -266,7 +291,7 @@ async function guardedFetch(input: string | URL | Request, init: RequestInit, ho
   if (hopsLeft === 0) {
     throw new Error('Outbound URL blocked: too many redirects');
   }
-  const hop = nextHop(response, location, url, input, init);
+  const hop = nextHop(response, location, url, merged);
   return guardedFetch(hop.url, hop.init, hopsLeft - 1);
 }
 

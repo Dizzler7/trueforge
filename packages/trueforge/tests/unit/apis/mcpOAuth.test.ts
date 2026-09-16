@@ -16,6 +16,17 @@ import { SqliteMcpServerStore } from '../../../src/db/sqlite/mcp-server-store/Sq
 import { SqliteOAuthTokenStore } from '../../../src/db/sqlite/token-store/SqliteOAuthTokenStore';
 import { mcpOAuthCallbackUrl } from '../../../src/mcp/auth/mcpOAuthHelpers';
 
+jest.mock('undici', () => {
+  const actual = jest.requireActual<typeof import('undici')>('undici');
+  return {
+    ...actual,
+    fetch: (input: unknown, init?: RequestInit) => {
+      const url = input instanceof Request ? input.url : String(input);
+      return globalThis.fetch(url, init);
+    },
+  };
+});
+
 const AS_ORIGIN = 'https://auth.example.com';
 const MCP_URL = 'https://mcp.example.com/sse';
 const FE_RETURN_TO = '/mcp/connected';
