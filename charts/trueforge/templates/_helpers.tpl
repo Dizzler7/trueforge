@@ -474,8 +474,8 @@ fields, wires bundled Postgres/Redis, optional OIDC, then server.extraEnv.
 {{- end -}}
 
 {{- $env = append $env (dict "name" "ENABLE_SSRF" "value" (.Values.configs.outboundUrl.enabled | toString)) -}}
-{{- if .Values.configs.outboundUrl.allowPrivateHosts -}}
-{{- $env = append $env (dict "name" "OUTBOUND_URL_ALLOW_PRIVATE_HOSTS" "value" .Values.configs.outboundUrl.allowPrivateHosts) -}}
+{{- if .Values.configs.outboundUrl.allowHosts -}}
+{{- $env = append $env (dict "name" "OUTBOUND_URL_ALLOW_HOSTS" "value" .Values.configs.outboundUrl.allowHosts) -}}
 {{- end -}}
 {{- if .Values.configs.outboundUrl.blockedHosts -}}
 {{- $env = append $env (dict "name" "OUTBOUND_URL_BLOCKED_HOSTS" "value" .Values.configs.outboundUrl.blockedHosts) -}}

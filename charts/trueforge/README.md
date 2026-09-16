@@ -272,7 +272,7 @@ configs:
   outboundUrl:
     # enabled: true
     # Optional. Empty = deny private/loopback/link-local MCP and model-provider URLs.
-    # allowPrivateHosts: "llm-gateway.internal,localhost"
+    # allowHosts: "llm-gateway.internal,localhost"
     # blockedHosts: ""
 ```
 

@@ -612,8 +612,8 @@ export interface SharedServerConfiguration {
   TRUEFORGE_MTLS_CERTS_DIR: string;
   /** Env: `ENABLE_SSRF`. Default true. `false` skips the outbound URL guard. */
   ENABLE_SSRF: boolean;
-  /** Hosts that may be private. Env: `OUTBOUND_URL_ALLOW_PRIVATE_HOSTS`. Empty = none. */
-  OUTBOUND_URL_ALLOW_PRIVATE_HOSTS: string[];
+  /** Hosts always allowed. Env: `OUTBOUND_URL_ALLOW_HOSTS`. Empty = none. */
+  OUTBOUND_URL_ALLOW_HOSTS: string[];
   /** Hosts always blocked. Env: `OUTBOUND_URL_BLOCKED_HOSTS`. Empty = none. */
   OUTBOUND_URL_BLOCKED_HOSTS: string[];
 }
@@ -865,7 +865,7 @@ const shared: SharedServerConfiguration = {
     raw: getEnv('ENABLE_SSRF'),
     defaultValue: true,
   }),
-  OUTBOUND_URL_ALLOW_PRIVATE_HOSTS: parseCommaSeparatedEnvList(getEnv('OUTBOUND_URL_ALLOW_PRIVATE_HOSTS')),
+  OUTBOUND_URL_ALLOW_HOSTS: parseCommaSeparatedEnvList(getEnv('OUTBOUND_URL_ALLOW_HOSTS')),
   OUTBOUND_URL_BLOCKED_HOSTS: parseCommaSeparatedEnvList(getEnv('OUTBOUND_URL_BLOCKED_HOSTS')),
 };
 
