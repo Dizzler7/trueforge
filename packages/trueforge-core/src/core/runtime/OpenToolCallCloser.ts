@@ -31,51 +31,26 @@ const DANGLING_TOOL_MESSAGE_CONTENT = JSON.stringify({
   error: 'Tool call was not executed. Please retry this tool call.',
 });
 
-const USER_ACTION_TOOL_MESSAGE_CONTENT = JSON.stringify({
-  error:
-    'Tool call was not executed: the user sent a new message before it was resolved. Do not retry unless the user asks.',
-});
+const CANCELLED_TOOL_MESSAGE_CONTENT = 'Tool call was cancelled: a new turn was started.';
 
-const THREAD_CREATION_TOOL_MESSAGE_CONTENT = 'Sub-agent was cancelled because the user sent a new message.';
-
-export type ClosableOpenToolCallKind = 'dangling' | 'user_action' | 'thread_creation';
-
-export interface ClosableOpenToolCall {
-  tool_call_id: string;
-  close_kind: ClosableOpenToolCallKind;
+function isPendingUserAction(toolCall: InternalEnrichedToolCall): boolean {
+  return toolCall.tool_info.is_approval_required === true || toolCall.tool_info.is_client_side === true;
 }
 
-function closeKindForToolCall(toolCall: InternalEnrichedToolCall): ClosableOpenToolCallKind {
-  if (toolCall.tool_info.is_thread_creation === true) {
-    return 'thread_creation';
-  }
-  if (toolCall.tool_info.is_approval_required === true || toolCall.tool_info.is_client_side === true) {
-    return 'user_action';
-  }
-  return 'dangling';
+function isThreadCreation(toolCall: InternalEnrichedToolCall): boolean {
+  return toolCall.tool_info.is_thread_creation === true;
 }
 
-function contentForCloseKind(closeKind: ClosableOpenToolCallKind): string {
-  switch (closeKind) {
-    case 'dangling':
-      return DANGLING_TOOL_MESSAGE_CONTENT;
-    case 'user_action':
-      return USER_ACTION_TOOL_MESSAGE_CONTENT;
-    case 'thread_creation':
-      return THREAD_CREATION_TOOL_MESSAGE_CONTENT;
-  }
-}
-
-export function getClosableOpenToolCalls(input: {
+export function getClosableOpenToolCallIds(input: {
   context: ContextMessage[];
   userMessageIncoming: boolean;
-}): ClosableOpenToolCall[] {
+}): Set<string> {
   const lastIdx = input.context.findLastIndex(
     (msg): msg is InternalEnrichedAssistantMessage =>
       isLLMContextMessage(msg) && msg.role === 'assistant' && !!msg.tool_calls?.length,
   );
   if (lastIdx === -1) {
-    return [];
+    return new Set();
   }
 
   const lastAssistant = input.context[lastIdx];
@@ -83,16 +58,11 @@ export function getClosableOpenToolCalls(input: {
     throw new Error('Unreachable');
   }
   if (!lastAssistant.tool_calls) {
-    return [];
+    return new Set();
   }
 
-  if (
-    !input.userMessageIncoming &&
-    lastAssistant.tool_calls.some(
-      tc => tc.tool_info.is_approval_required === true || tc.tool_info.is_client_side === true,
-    )
-  ) {
-    return [];
+  if (!input.userMessageIncoming && lastAssistant.tool_calls.some(isPendingUserAction)) {
+    return new Set();
   }
 
   const resolvedIds = new Set<string>();
@@ -102,25 +72,17 @@ export function getClosableOpenToolCalls(input: {
     }
   }
 
-  const closable: ClosableOpenToolCall[] = [];
+  const closable = new Set<string>();
   for (const toolCall of lastAssistant.tool_calls) {
     if (resolvedIds.has(toolCall.id)) {
       continue;
     }
-    const close_kind = closeKindForToolCall(toolCall);
-    if (!input.userMessageIncoming && close_kind === 'thread_creation') {
+    if (!input.userMessageIncoming && isThreadCreation(toolCall)) {
       continue;
     }
-    closable.push({ tool_call_id: toolCall.id, close_kind });
+    closable.add(toolCall.id);
   }
   return closable;
-}
-
-export function getClosableOpenToolCallIds(input: {
-  context: ContextMessage[];
-  userMessageIncoming: boolean;
-}): Set<string> {
-  return new Set(getClosableOpenToolCalls(input).map(call => call.tool_call_id));
 }
 
 // we are closing open tool calls synthetically, the subscriber needs to understand
@@ -142,29 +104,32 @@ export class OpenToolCallCloser implements PreSendContextProcessor {
     execution: Readonly<AgentThreadExecutionContext>,
     options: { userMessageIncoming: boolean },
   ): AsyncGenerator<AgentContextProcessorAppendContext, void, unknown> {
-    const closable = getClosableOpenToolCalls({
-      context: execution.context,
-      userMessageIncoming: options.userMessageIncoming,
-    });
-    if (closable.length === 0) {
+    const closableIds = [
+      ...getClosableOpenToolCallIds({
+        context: execution.context,
+        userMessageIncoming: options.userMessageIncoming,
+      }),
+    ];
+    if (closableIds.length === 0) {
       return;
     }
 
-    const dummyToolMessages: LLMToolMessage[] = closable.map(call => ({
+    const content = options.userMessageIncoming ? CANCELLED_TOOL_MESSAGE_CONTENT : DANGLING_TOOL_MESSAGE_CONTENT;
+    const dummyToolMessages: LLMToolMessage[] = closableIds.map(toolCallId => ({
       role: 'tool',
-      tool_call_id: call.tool_call_id,
-      content: contentForCloseKind(call.close_kind),
+      tool_call_id: toolCallId,
+      content,
     }));
 
-    const output: ToolResponseEvent[] = closable
-      .filter(call => call.close_kind !== 'dangling')
-      .map(call =>
-        toToolResponseEvent({
-          threadId: execution.threadId,
-          toolCallId: call.tool_call_id,
-          content: contentForCloseKind(call.close_kind),
-        }),
-      );
+    const output: ToolResponseEvent[] = options.userMessageIncoming
+      ? closableIds.map(toolCallId =>
+          toToolResponseEvent({
+            threadId: execution.threadId,
+            toolCallId,
+            content,
+          }),
+        )
+      : [];
 
     const currentContextUsage = mergeCurrentContextUsage(
       execution.currentContextUsage,

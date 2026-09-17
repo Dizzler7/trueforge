@@ -2,11 +2,7 @@ import { EventType } from '../../../src/core/events/schema';
 import type { InternalEnrichedAssistantMessage, InternalEnrichedToolCall } from '../../../src/core/llm/LLMTypes';
 import type { ContextMessage } from '../../../src/core/runtime/AgentThread.types';
 import { getEmptyCurrentContextUsage } from '../../../src/core/runtime/contextUsage';
-import {
-  getClosableOpenToolCallIds,
-  getClosableOpenToolCalls,
-  OpenToolCallCloser,
-} from '../../../src/core/runtime/OpenToolCallCloser';
+import { getClosableOpenToolCallIds, OpenToolCallCloser } from '../../../src/core/runtime/OpenToolCallCloser';
 import '../harnessMocks';
 
 function makeToolCall(
@@ -119,12 +115,9 @@ describe('getClosableOpenToolCallIds', () => {
       makeToolCall('tc-client', { is_client_side: true }),
       makeToolCall('tc-sub-agent', { is_thread_creation: true }),
     ]);
-    expect(getClosableOpenToolCalls({ context, userMessageIncoming: true })).toEqual([
-      { tool_call_id: 'tc-regular', close_kind: 'dangling' },
-      { tool_call_id: 'tc-approval', close_kind: 'user_action' },
-      { tool_call_id: 'tc-client', close_kind: 'user_action' },
-      { tool_call_id: 'tc-sub-agent', close_kind: 'thread_creation' },
-    ]);
+    expect(getClosableOpenToolCallIds({ context, userMessageIncoming: true })).toEqual(
+      new Set(['tc-regular', 'tc-approval', 'tc-client', 'tc-sub-agent']),
+    );
   });
 
   it('still excludes already-resolved calls when a user message is incoming', () => {
@@ -135,9 +128,7 @@ describe('getClosableOpenToolCallIds', () => {
       ]),
       { role: 'tool', tool_call_id: 'tc-approval', content: 'already closed' },
     ];
-    expect(getClosableOpenToolCalls({ context, userMessageIncoming: true })).toEqual([
-      { tool_call_id: 'tc-sub-agent', close_kind: 'thread_creation' },
-    ]);
+    expect(getClosableOpenToolCallIds({ context, userMessageIncoming: true })).toEqual(new Set(['tc-sub-agent']));
   });
 });
 
@@ -171,18 +162,41 @@ describe('OpenToolCallCloser.processPreSend', () => {
     expect(yielded[0]?.output).toEqual([]);
   });
 
-  it('emits tool.response events for user-action and thread-creation closures', async () => {
+  it('cancels every unmatched last-assistant call with the same content and tool.response events', async () => {
     const yielded = await collectPreSend(
       assistantWithToolCalls([
+        makeToolCall('tc-regular'),
         makeToolCall('tc-approval', { is_approval_required: true }),
         makeToolCall('tc-sub-agent', { is_thread_creation: true }),
       ]),
       true,
     );
+    const cancelled = 'Tool call was cancelled: a new turn was started.';
     expect(yielded).toHaveLength(1);
+    expect(yielded[0]?.context).toEqual([
+      { role: 'tool', tool_call_id: 'tc-regular', content: cancelled },
+      { role: 'tool', tool_call_id: 'tc-approval', content: cancelled },
+      { role: 'tool', tool_call_id: 'tc-sub-agent', content: cancelled },
+    ]);
     expect(yielded[0]?.output).toEqual([
-      expect.objectContaining({ type: EventType.TOOL_RESPONSE, tool_call_id: 'tc-approval', thread_id: 'main' }),
-      expect.objectContaining({ type: EventType.TOOL_RESPONSE, tool_call_id: 'tc-sub-agent', thread_id: 'main' }),
+      expect.objectContaining({
+        type: EventType.TOOL_RESPONSE,
+        tool_call_id: 'tc-regular',
+        thread_id: 'main',
+        content: cancelled,
+      }),
+      expect.objectContaining({
+        type: EventType.TOOL_RESPONSE,
+        tool_call_id: 'tc-approval',
+        thread_id: 'main',
+        content: cancelled,
+      }),
+      expect.objectContaining({
+        type: EventType.TOOL_RESPONSE,
+        tool_call_id: 'tc-sub-agent',
+        thread_id: 'main',
+        content: cancelled,
+      }),
     ]);
   });
 
@@ -191,6 +205,6 @@ describe('OpenToolCallCloser.processPreSend', () => {
     const first = await collectPreSend(context, false);
     const closed = [...context, ...(first[0]?.context ?? [])];
     expect(await collectPreSend(closed, false)).toEqual([]);
-    expect(getClosableOpenToolCalls({ context: closed, userMessageIncoming: true })).toEqual([]);
+    expect(getClosableOpenToolCallIds({ context: closed, userMessageIncoming: true })).toEqual(new Set());
   });
 });

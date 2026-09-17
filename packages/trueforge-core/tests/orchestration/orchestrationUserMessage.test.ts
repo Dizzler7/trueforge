@@ -69,7 +69,11 @@ describe('orchestration: user message while work is pending', () => {
     expect(steered.result.required_actions).toEqual([]);
     expect(llmCreateInputs(thread.definition.modelClient).at(-1)).toMatchObject({
       messages: expect.arrayContaining([
-        { role: 'tool', tool_call_id: WRITE_NOTE_CALL_ID, content: expect.stringContaining('new message') },
+        {
+          role: 'tool',
+          tool_call_id: WRITE_NOTE_CALL_ID,
+          content: 'Tool call was cancelled: a new turn was started.',
+        },
         { role: 'user', content: 'never mind, do this instead' },
       ]),
     });
