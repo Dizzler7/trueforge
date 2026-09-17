@@ -217,6 +217,8 @@ function ThreadListItemRow({
       skipRenameBlurRef.current = true;
       setRenaming(false);
     } catch (caught) {
+      skipRenameBlurRef.current = true;
+      setRenaming(false);
       toaster?.showError(caught);
     } finally {
       setRenameSaving(false);
@@ -301,6 +303,7 @@ function ThreadListItemRow({
               canDelete={showDelete}
               deleteDisabled={deleteDisabled}
               onRename={() => {
+                skipRenameBlurRef.current = false;
                 setRenameValue(title ?? '');
                 setRenaming(true);
               }}

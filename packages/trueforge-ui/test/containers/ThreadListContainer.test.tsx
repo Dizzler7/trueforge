@@ -508,7 +508,7 @@ describe('ThreadListContainer', () => {
     expect(screen.getByText('Remote session')).toBeInTheDocument();
   });
 
-  it('toasts when rename fails and keeps the inline editor open', async () => {
+  it('toasts when rename fails and closes the inline editor', async () => {
     const onRename = vi.fn(async () => {
       throw new Error('rename failed');
     });
@@ -538,7 +538,9 @@ describe('ThreadListContainer', () => {
     await waitFor(() => {
       expect(screen.getByText('rename failed')).toBeInTheDocument();
     });
-    expect(screen.getByRole('textbox', { name: 'Session title' })).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Session title' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Remote session' }));
+    expect(onRename).toHaveBeenCalledOnce();
   });
 
   it('disables rename when the caller lacks MANAGE', async () => {

@@ -8,7 +8,7 @@ import { SlotsProvider } from '@/theme/SlotsProvider.js';
 
 describe('ThreadListRow', () => {
   it('renders an inline title input when renaming', () => {
-    render(
+    const { rerender } = render(
       <SlotsProvider>
         <ThreadListRow title="Session A" active onSelect={() => {}} renaming renameValue="Session A" />
       </SlotsProvider>,
@@ -21,6 +21,22 @@ describe('ThreadListRow', () => {
     expect(row).not.toHaveAttribute('data-active');
     expect(row?.className).not.toMatch(/bg-dropdown-selected-item-bg/);
     expect(screen.queryByRole('button', { name: 'Session A' })).not.toBeInTheDocument();
+
+    rerender(
+      <SlotsProvider>
+        <ThreadListRow
+          title="Session A"
+          active
+          onSelect={() => {}}
+          renaming
+          renameValue="Session A"
+          renameSaving
+        />
+      </SlotsProvider>,
+    );
+    expect(input).toHaveAttribute('readonly');
+    expect(input).not.toBeDisabled();
+    expect(input).toHaveFocus();
   });
 
   it('hides actions when omitted', () => {

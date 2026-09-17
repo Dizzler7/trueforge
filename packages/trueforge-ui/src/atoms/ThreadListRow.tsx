@@ -70,9 +70,9 @@ function ThreadListRenameField({
         ref={inputRef}
         aria-label="Session title"
         value={renameValue ?? title}
-        disabled={renameSaving}
+        readOnly={renameSaving}
         maxLength={MAX_SESSION_TITLE_LENGTH}
-        className="h-7 w-full cursor-text border-none bg-transparent text-sm text-text-primary outline-none focus:ring-0 focus-visible:ring-0 disabled:cursor-not-allowed"
+        className="h-7 w-full cursor-text border-none bg-transparent text-sm text-text-primary outline-none focus:ring-0 focus-visible:ring-0"
         onChange={event => onRenameValueChange?.(event.target.value)}
         onBlur={() => onRenameBlur?.()}
         onKeyDown={event => {
