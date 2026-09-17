@@ -24,14 +24,7 @@ describe('ThreadListRow', () => {
 
     rerender(
       <SlotsProvider>
-        <ThreadListRow
-          title="Session A"
-          active
-          onSelect={() => {}}
-          renaming
-          renameValue="Session A"
-          renameSaving
-        />
+        <ThreadListRow title="Session A" active onSelect={() => {}} renaming renameValue="Session A" renameSaving />
       </SlotsProvider>,
     );
     expect(input).toHaveAttribute('readonly');
