@@ -35,9 +35,9 @@ function mockServer(
   agents: Array<{
     name: string;
     agentId: string;
+    description?: string;
     agentSpec?: {
       model: { name: string };
-      description?: string;
       skills?: Array<{ id: string; name: string }>;
       mcpServers?: Array<{ id: string; name: string }>;
     };
@@ -146,7 +146,12 @@ describe('AgentsLibrary', () => {
 
   it('lists agents and selects a named agent (Try = immutable)', async () => {
     const server = mockServer([
-      { name: 'alpha-agent', agentId: 'alpha-agent' },
+      {
+        name: 'alpha-agent',
+        agentId: 'alpha-agent',
+        description: 'Alpha handles triage.',
+        agentSpec: { model: { name: 'openai/gpt-4.1' } },
+      },
       { name: 'beta-agent', agentId: 'beta-agent' },
     ]);
     const onSelectAgent = vi.fn();
@@ -158,12 +163,41 @@ describe('AgentsLibrary', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Try agent alpha-agent' })).toBeInTheDocument();
     });
+    expect(screen.getByText('Alpha handles triage.')).toHaveClass('truncate');
 
     fireEvent.click(screen.getByRole('button', { name: 'Try agent beta-agent' }));
     expect(onSelectAgent).toHaveBeenCalledWith('beta-agent');
     await waitFor(() => {
       expect(screen.queryByRole('heading', { name: 'Agents' })).not.toBeInTheDocument();
     });
+  });
+
+  it('truncates long descriptions without hiding Try, and skips name-echo descriptions', async () => {
+    const longDescription = `${'Lorem ipsum dolor sit amet, '.repeat(20)}consectetur.`;
+    const server = mockServer([
+      {
+        name: 'verbose-agent',
+        agentId: 'verbose-agent',
+        description: longDescription,
+        agentSpec: { model: { name: 'openai/gpt-4.1' } },
+      },
+      {
+        name: 'echo-agent',
+        agentId: 'echo-agent',
+        description: 'echo-agent',
+        agentSpec: { model: { name: 'openai/gpt-4.1' } },
+      },
+    ]);
+
+    renderLibrary(<LibraryHarness />, { server });
+    fireEvent.click(screen.getByRole('button', { name: 'Open library' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Try agent verbose-agent' })).toBeInTheDocument();
+    });
+    expect(screen.getByRole('columnheader', { name: 'Configuration' })).toBeInTheDocument();
+    expect(screen.getByText(longDescription)).toHaveClass('truncate');
+    expect(screen.queryByText('echo-agent', { selector: '.text-xs' })).not.toBeInTheDocument();
   });
 
   it('shows Edit/Clone/Delete when composer is enabled and agentSpec is present', async () => {
@@ -208,7 +242,9 @@ describe('AgentsLibrary', () => {
         },
       ]),
       permissions: {
-        listPermissions: vi.fn(async (): Promise<ListPermissionsResponse> => ({ data: { 'shared-id': ['USE'] } })),
+        listPermissions: vi.fn(async (): Promise<ListPermissionsResponse> => ({
+          data: { type: 'agent', permissions: { 'shared-id': ['USE'] } },
+        })),
       },
       sessions: createMockAgentSessionsServer(),
       schedules: createMockScheduleServer(),
@@ -240,6 +276,7 @@ describe('AgentsLibrary', () => {
         {
           name: 'writer',
           agentId: 'writer-id',
+          description: 'Writes release notes.',
           agentSpec: { model: { name: 'openai-main/gpt-4.1' } },
         },
       ]),
@@ -263,6 +300,7 @@ describe('AgentsLibrary', () => {
     await waitFor(() => {
       expect(saveAgent).toHaveBeenCalledWith({
         agentName: 'writer-copy',
+        description: 'Writes release notes.',
         agentSpec: { model: { name: 'openai-main/gpt-4.1' } },
         intent: 'create',
       });
@@ -270,7 +308,7 @@ describe('AgentsLibrary', () => {
     expect(screen.getByRole('heading', { name: 'Agents' })).toBeInTheDocument();
   });
 
-  it('deletes an agent after confirm and stays on the library', async () => {
+  it('deletes an agent only after the confirmation dialog is accepted', async () => {
     const deleteAgent = vi.fn(async () => {});
     const server = createMockAgentUIServer({
       searchAgents: vi.fn(async () => [
@@ -293,6 +331,15 @@ describe('AgentsLibrary', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
 
     expect(screen.getByRole('dialog', { name: 'Delete agent' })).toBeInTheDocument();
+    expect(screen.getByText(/including any schedules for this agent/)).toBeInTheDocument();
+    expect(deleteAgent).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog', { name: 'Delete agent' })).not.toBeInTheDocument();
+    expect(deleteAgent).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for writer' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
     fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
 
     await waitFor(() => {
@@ -604,6 +651,60 @@ describe('AgentsLibraryButton', () => {
     expect(await screen.findByRole('button', { name: 'Add schedule for alpha-agent' })).toBeInTheDocument();
   });
 
+  it('disables next page when the current page is short', async () => {
+    renderLibrary(<LibraryHarness />, { server: mockServer([{ name: 'alpha-agent', agentId: 'alpha-agent' }]) });
+    fireEvent.click(screen.getByRole('button', { name: 'Open library' }));
+
+    await screen.findByRole('button', { name: 'Try agent alpha-agent' });
+    expect(screen.getByRole('button', { name: 'Next page' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Previous page' })).toBeDisabled();
+  });
+
+  it('paginates with next and previous and resets offset when page size changes', async () => {
+    const all = Array.from({ length: 15 }, (_, i) => ({
+      name: `agent-${String(i).padStart(2, '0')}`,
+      agentId: `agent-${i}`,
+    }));
+    const searchAgents = vi.fn(async ({ limit = 10, offset = 0 }: { limit?: number; offset?: number } = {}) =>
+      all.slice(offset, offset + limit),
+    );
+    const server = createMockAgentUIServer({ searchAgents });
+
+    renderLibrary(<LibraryHarness />, { server });
+    fireEvent.click(screen.getByRole('button', { name: 'Open library' }));
+
+    await screen.findByRole('button', { name: 'Try agent agent-00' });
+    expect(searchAgents).toHaveBeenLastCalledWith({ query: undefined, limit: 10, offset: 0 });
+    expect(screen.getByRole('button', { name: 'Next page' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Previous page' })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    await waitFor(() => {
+      expect(searchAgents).toHaveBeenLastCalledWith({ query: undefined, limit: 10, offset: 10 });
+    });
+    await screen.findByRole('button', { name: 'Try agent agent-10' });
+    expect(screen.getByRole('button', { name: 'Previous page' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Next page' })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Previous page' }));
+    await waitFor(() => {
+      expect(searchAgents).toHaveBeenLastCalledWith({ query: undefined, limit: 10, offset: 0 });
+    });
+    await screen.findByRole('button', { name: 'Try agent agent-00' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    await waitFor(() => {
+      expect(searchAgents).toHaveBeenLastCalledWith({ query: undefined, limit: 10, offset: 10 });
+    });
+
+    // PopoverSelect: open rows-per-page and pick 25
+    fireEvent.click(screen.getByRole('button', { name: 'Rows per page' }));
+    fireEvent.click(await screen.findByRole('option', { name: '25' }));
+    await waitFor(() => {
+      expect(searchAgents).toHaveBeenLastCalledWith({ query: undefined, limit: 25, offset: 0 });
+    });
+  });
+
   it('shows Created by when agents include createdBySubject', async () => {
     const server = mockServer([
       {
@@ -621,7 +722,7 @@ describe('AgentsLibraryButton', () => {
 
     expect(await screen.findByRole('columnheader', { name: 'Created by' })).toBeInTheDocument();
     expect(screen.getByText('alice@example.com')).toBeInTheDocument();
-    expect(document.querySelector('[data-slot="avatar-fallback"]')).toHaveTextContent('AL');
+    expect(document.querySelector('[data-slot="avatar-fallback"]')).toHaveTextContent(/^A$/);
   });
 
   it('hides Created by when no agent has createdBySubject', async () => {

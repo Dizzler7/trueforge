@@ -20,6 +20,7 @@ export function cloneAgentName(agentName: string): string {
 
 export type AgentOverflowMenuProps = {
   agentName: string;
+  description?: string;
   agentSpec?: AgentSpec;
   /** Edit / Clone / Delete when composer is enabled. */
   canMutate: boolean;
@@ -37,6 +38,7 @@ type PendingAction = 'clone' | 'delete' | null;
 
 export function AgentOverflowMenu({
   agentName,
+  description,
   agentSpec,
   canMutate,
   canUse = true,
@@ -72,6 +74,7 @@ export function AgentOverflowMenu({
     try {
       await builder.saveAgent({
         agentName: clonedName,
+        ...(description === undefined ? {} : { description }),
         agentSpec,
         intent: 'create',
       });
@@ -90,6 +93,7 @@ export function AgentOverflowMenu({
 
   const handleDelete = async () => {
     if (!canDelete || builder == null || typeof builder.deleteAgent !== 'function') return;
+    setPending(null);
     setBusy(true);
     try {
       await builder.deleteAgent({ agentName });
@@ -98,7 +102,6 @@ export function AgentOverflowMenu({
         title: 'Agent deleted',
         description: `“${agentName}” was deleted.`,
       });
-      setPending(null);
       onDeleted?.();
     } catch (caught) {
       toaster?.showError(caught);
@@ -208,9 +211,10 @@ export function AgentOverflowMenu({
         <Dialog open onOpenChange={open => !open && closePending()} aria-label="Delete agent" className="max-w-md">
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Delete agent?</DialogTitle>
+              <DialogTitle>Delete agent</DialogTitle>
               <p className="text-text-secondary text-sm">
-                “{agentName}” will be permanently deleted. This cannot be undone.
+                “{agentName}” will be permanently deleted, including any schedules for this agent. This cannot be
+                undone.
               </p>
             </DialogHeader>
           </DialogContent>

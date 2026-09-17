@@ -21,8 +21,20 @@ import { PageHeader } from './PageHeader.js';
 import { Button } from './primitives/Button.js';
 import SearchInput from './primitives/SearchInput.js';
 import { Skeleton } from './primitives/Skeleton.js';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './primitives/Table.js';
+import {
+  DEFAULT_TABLE_PAGE_SIZE,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  TableTokenPagination,
+} from './primitives/Table.js';
 import { Tooltip } from './primitives/Tooltip.js';
+
+/** API max page size for agents list. */
+const AGENTS_PAGE_SIZE_OPTIONS = [10, 25] as const;
 
 export type AgentsLibraryProps = {
   onSelectAgent?: (agentName: string) => void;
@@ -177,10 +189,14 @@ export function AgentLibraryRow({
   const skillsTitle = skillNames.length ? skillNames.join(', ') : `${skillsCount} skills`;
   const hasConfiguration = modelLabel != null || skillsCount > 0 || mcpCount > 0;
   const hasNoSchedules = scheduleSummary != null && scheduleSummary.count === 0;
+  const storedDescription = agent.description?.trim() || null;
+  // Create falls back to name when description is missing; don't echo it under the title.
+  const description = storedDescription != null && storedDescription !== agent.name ? storedDescription : null;
 
   return (
     <TableRow className={hasNoSchedules ? 'group' : undefined}>
-      <TableCell className="text-text-primary font-medium">
+      {/* Fixed width so truncate works; 24rem = 1.5× the prior min-w-64 name column. */}
+      <TableCell className="text-text-primary w-96 max-w-96 font-medium">
         {onOpen == null ? (
           <span className="block truncate">{agent.name}</span>
         ) : (
@@ -193,6 +209,15 @@ export function AgentLibraryRow({
             <span className="block truncate">{agent.name}</span>
           </button>
         )}
+        {description ? (
+          <Tooltip
+            content={description}
+            className="max-w-sm whitespace-normal text-left"
+            triggerClassName="block min-w-0 w-full max-w-full"
+          >
+            <span className="text-text-secondary block truncate text-xs font-normal">{description}</span>
+          </Tooltip>
+        ) : null}
       </TableCell>
       <TableCell>
         {hasConfiguration ? (
@@ -264,6 +289,7 @@ export function AgentLibraryRow({
           </PermissionGuard>
           <AgentOverflowMenu
             agentName={agent.name}
+            {...(storedDescription != null ? { description: storedDescription } : {})}
             {...(spec != null ? { agentSpec: spec } : {})}
             canMutate={canMutate}
             canUse={canUseAgent}
@@ -357,12 +383,15 @@ export function AgentsLibrary({ onSelectAgent }: AgentsLibraryProps) {
     return () => window.removeEventListener('keydown', onKeyDown, true);
   }, [closeLibrary, open]);
 
-  const { agents, isInitialLoading, isSearching, loadingMore, error, hasMore, listRef, sentinelRef } =
+  const { agents, isInitialLoading, isSearching, error, pageSize, setPageSize, canPrev, canNext, goPrev, goNext } =
     useSearchAgentsList({
       enabled: open,
       query,
       refreshKey: agentsListEpoch,
+      mode: 'paged',
+      limit: DEFAULT_TABLE_PAGE_SIZE,
     });
+  const hasPageNav = canPrev || canNext;
   const showCreatedByColumn = hasCreatedBySubject(agents);
   const permissionAgentIds = open ? agents.map(libraryAgentId) : [];
   const { allows } = useResourcePermissions({
@@ -425,6 +454,7 @@ export function AgentsLibrary({ onSelectAgent }: AgentsLibraryProps) {
       isCreateAgent: true,
       agentId: libraryAgentId(agent),
       agentName: agent.name,
+      ...(agent.description === undefined ? {} : { description: agent.description }),
       agentSpec,
     });
   };
@@ -449,7 +479,7 @@ export function AgentsLibrary({ onSelectAgent }: AgentsLibraryProps) {
 
       <div className="bg-secondary-bg/40 flex min-h-0 flex-1 flex-col">
         {/* Not flex-col: overflow-hidden table chrome would clip instead of letting this scroll. */}
-        <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto p-4" aria-label="Agents">
+        <div className="min-h-0 flex-1 overflow-y-auto p-4" aria-label="Agents">
           {isInitialLoading ? (
             <div className="flex flex-col gap-2 p-1" role="status" aria-label="Loading agents">
               {Array.from({ length: 6 }, (_, i) => (
@@ -458,7 +488,7 @@ export function AgentsLibrary({ onSelectAgent }: AgentsLibraryProps) {
             </div>
           ) : error ? (
             <p className="text-failure-bg px-3 py-8 text-center text-sm">{error}</p>
-          ) : agents.length === 0 ? (
+          ) : agents.length === 0 && !hasPageNav ? (
             <EmptyScreen
               title="No Agents Found"
               description={
@@ -471,87 +501,114 @@ export function AgentsLibrary({ onSelectAgent }: AgentsLibraryProps) {
                 )
               }
             />
-          ) : (
-            <>
+          ) : agents.length === 0 ? (
+            <div className="flex min-h-full flex-col">
+              <EmptyScreen
+                title="No Agents Found"
+                description={
+                  query.trim() ? (
+                    <>
+                      No search results found for <EmptyScreenQueryHighlight>{query.trim()}</EmptyScreenQueryHighlight>
+                    </>
+                  ) : (
+                    'Build one in a chat, then save it as an agent.'
+                  )
+                }
+                className="flex-1"
+              />
               <div className="overflow-hidden rounded-lg border border-border">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="hover:bg-transparent">
-                      <TableHead>Agent name</TableHead>
-                      <TableHead>Configuration</TableHead>
-                      {showCreatedByColumn ? <TableHead>Created by</TableHead> : null}
-                      {showSchedulesColumn ? <TableHead className="w-[14rem]">Schedules</TableHead> : null}
-                      <TableHead className="w-px">
-                        <span className="sr-only">Actions</span>
-                      </TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {agents.map(agent => {
-                      const agentSpec = agent.agentSpec;
-                      const agentId = agent.agentId;
-                      const id = libraryAgentId(agent);
-                      const summary = showSchedulesColumn
-                        ? (scheduleByAgent?.get(id) ??
-                          scheduleByAgent?.get(agent.name) ??
-                          (scheduleByAgent == null
-                            ? null
-                            : { count: 0, pausedCount: 0, activeNames: [], pausedNames: [] }))
-                        : undefined;
-                      return (
-                        <SlottedAgentLibraryRow
-                          key={id}
-                          agent={agent}
-                          canMutate={canMutate}
-                          canUseAgent={allows(id, 'USE')}
-                          canManageAgent={allows(id, 'MANAGE')}
-                          canDeleteAgent={allows(id, 'DELETE')}
-                          canManageSchedules={canOpenAgentSchedules}
-                          showCreatedBy={showCreatedByColumn}
-                          {...(summary !== undefined ? { scheduleSummary: summary } : {})}
-                          {...(canOpenAgentSchedules && agentId != null
-                            ? {
-                                onOpenSchedules: () => openSchedulesForAgent({ agentId }),
-                                onCreateSchedule: () => openSchedulesForAgent({ agentId, isNew: true }),
-                                onManageSchedules: () => openSchedulesForAgent({ agentId }),
-                              }
-                            : {})}
-                          {...(canOpenAgentDetails && agentId != null
-                            ? {
-                                onOpen: () => {
-                                  updateShareSearch({
-                                    agentId,
-                                    tab: 'overview',
-                                    sessionId: null,
-                                    view: null,
-                                    timeRange: null,
-                                  });
-                                  shell.openLibraryAgent(agentId);
-                                },
-                              }
-                            : {})}
-                          onTry={() => {
-                            if (allows(id, 'USE')) handleTry(agent);
-                          }}
-                          onEdit={() => {
-                            if (agentSpec != null && allows(id, 'MANAGE')) handleEdit(agent, agentSpec);
-                          }}
-                        />
-                      );
-                    })}
-                  </TableBody>
-                </Table>
+                <TableTokenPagination
+                  pageSize={pageSize}
+                  rowCount={0}
+                  canPrev={canPrev}
+                  canNext={canNext}
+                  onPrev={goPrev}
+                  onNext={goNext}
+                  pageSizeOptions={AGENTS_PAGE_SIZE_OPTIONS}
+                  onPageSizeChange={setPageSize}
+                />
               </div>
-              {hasMore ? (
-                <div ref={sentinelRef} className="flex h-8 shrink-0 items-center justify-center" aria-hidden>
-                  {loadingMore ? (
-                    <span className="text-text-secondary text-xs" role="status">
-                      Loading more…
-                    </span>
-                  ) : null}
-                </div>
-              ) : null}
-            </>
+            </div>
+          ) : (
+            <div className="overflow-hidden rounded-lg border border-border">
+              <Table>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead className="w-96 min-w-96">Agent name</TableHead>
+                    <TableHead>Configuration</TableHead>
+                    {showCreatedByColumn ? <TableHead>Created by</TableHead> : null}
+                    {showSchedulesColumn ? <TableHead className="w-[14rem]">Schedules</TableHead> : null}
+                    <TableHead className="w-px">
+                      <span className="sr-only">Actions</span>
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {agents.map(agent => {
+                    const agentSpec = agent.agentSpec;
+                    const agentId = agent.agentId;
+                    const id = libraryAgentId(agent);
+                    const summary = showSchedulesColumn
+                      ? (scheduleByAgent?.get(id) ??
+                        scheduleByAgent?.get(agent.name) ??
+                        (scheduleByAgent == null
+                          ? null
+                          : { count: 0, pausedCount: 0, activeNames: [], pausedNames: [] }))
+                      : undefined;
+                    return (
+                      <SlottedAgentLibraryRow
+                        key={id}
+                        agent={agent}
+                        canMutate={canMutate}
+                        canUseAgent={allows(id, 'USE')}
+                        canManageAgent={allows(id, 'MANAGE')}
+                        canDeleteAgent={allows(id, 'DELETE')}
+                        canManageSchedules={canOpenAgentSchedules}
+                        showCreatedBy={showCreatedByColumn}
+                        {...(summary !== undefined ? { scheduleSummary: summary } : {})}
+                        {...(canOpenAgentSchedules && agentId != null
+                          ? {
+                              onOpenSchedules: () => openSchedulesForAgent({ agentId }),
+                              onCreateSchedule: () => openSchedulesForAgent({ agentId, isNew: true }),
+                              onManageSchedules: () => openSchedulesForAgent({ agentId }),
+                            }
+                          : {})}
+                        {...(canOpenAgentDetails && agentId != null
+                          ? {
+                              onOpen: () => {
+                                updateShareSearch({
+                                  agentId,
+                                  tab: 'overview',
+                                  sessionId: null,
+                                  view: null,
+                                  timeRange: null,
+                                });
+                                shell.openLibraryAgent(agentId);
+                              },
+                            }
+                          : {})}
+                        onTry={() => {
+                          if (allows(id, 'USE')) handleTry(agent);
+                        }}
+                        onEdit={() => {
+                          if (agentSpec != null && allows(id, 'MANAGE')) handleEdit(agent, agentSpec);
+                        }}
+                      />
+                    );
+                  })}
+                </TableBody>
+              </Table>
+              <TableTokenPagination
+                pageSize={pageSize}
+                rowCount={agents.length}
+                canPrev={canPrev}
+                canNext={canNext}
+                onPrev={goPrev}
+                onNext={goNext}
+                pageSizeOptions={AGENTS_PAGE_SIZE_OPTIONS}
+                onPageSizeChange={setPageSize}
+              />
+            </div>
           )}
         </div>
       </div>

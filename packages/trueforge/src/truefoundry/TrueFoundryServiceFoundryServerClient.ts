@@ -85,8 +85,11 @@ const AgentPermissionsSchema = z.record(
 export type AgentPermissions = z.infer<typeof AgentPermissionsSchema>;
 
 const VendTokenResponseSchema = z.object({
-  token: z.string().min(1),
+  subjectToken: z.string().min(1),
+  actorToken: z.string().min(1),
 });
+
+export type VendedTokens = z.infer<typeof VendTokenResponseSchema>;
 
 export interface PutRemoteAgentInput {
   accessToken: string;
@@ -94,6 +97,7 @@ export interface PutRemoteAgentInput {
   description: string;
   model: string;
   mcp_servers: string[];
+  trueFoundryManagedAgentId?: string;
 }
 
 export interface PutRemoteAgentResult {
@@ -242,6 +246,7 @@ export class TrueFoundryServiceFoundryServerClient {
 
   /** PUT `/internal/tfg/agents` — create/reuse remote agent + sync model/MCP grants. */
   async putRemoteAgent(input: PutRemoteAgentInput): Promise<PutRemoteAgentResult> {
+    const hasTrueFoundryManagedAgentId = input.trueFoundryManagedAgentId !== undefined;
     const payload = await this.#requestJson({
       url: this.#url(TFG_AGENTS_PATH),
       accessToken: input.accessToken,
@@ -252,6 +257,7 @@ export class TrueFoundryServiceFoundryServerClient {
         description: input.description,
         model: input.model,
         mcp_servers: input.mcp_servers,
+        ...(hasTrueFoundryManagedAgentId ? { trueFoundryManagedAgentId: input.trueFoundryManagedAgentId } : {}),
       },
     });
     const parsed = PutRemoteAgentResponseSchema.safeParse(payload);
@@ -526,14 +532,38 @@ export class TrueFoundryServiceFoundryServerClient {
   }
 
   /**
-   * Exchange a TrueFoundry API key for an agent-scoped token.
+   * `GET v1/authorize/permissions?resourceType=tenant&v2=true` — flat action list
+   * (tenant + root-account merged), same as the platform FE Create Agent check.
+   */
+  async getTenantPermissions(input: { accessToken: string }): Promise<string[]> {
+    const payload = await this.#requestJson({
+      url: this.#url(AGENT_PERMISSIONS_PATH, { resourceType: 'tenant', v2: 'true' }),
+      accessToken: input.accessToken,
+      method: 'GET',
+    });
+    const parsed = z.array(z.string()).safeParse(payload);
+    if (!parsed.success) {
+      this.#logger.error('TrueFoundry ServiceFoundry tenant permissions response was malformed', {
+        ...extractErrorLogFields(parsed.error),
+      });
+      throw new HTTPException(424, {
+        message: 'TrueFoundry ServiceFoundry tenant permissions response was malformed',
+        cause: parsed.error,
+      });
+    }
+    return parsed.data;
+  }
+
+  /**
+   * Exchange a TrueFoundry API key for dual agent-scoped tokens.
+   * Wire `actorToken` is the agent identity (`asAgent`); wire `subjectToken` is the user with agent in `act` (`asUser`).
    * Authenticated with the server API key, not the user bearer.
    */
   async vendToken(input: {
     subject: { id: string; type: string; display_name: string };
     agentId: string;
     tenantName: string;
-  }): Promise<string> {
+  }): Promise<VendedTokens> {
     const payload = await this.#requestJson({
       url: this.#url(VEND_TOKEN_PATH),
       accessToken: this.#apiKey,
@@ -556,7 +586,7 @@ export class TrueFoundryServiceFoundryServerClient {
         cause: parsed.error,
       });
     }
-    return parsed.data.token;
+    return parsed.data;
   }
 
   #parseListResponse(payload: unknown): ListResponse {

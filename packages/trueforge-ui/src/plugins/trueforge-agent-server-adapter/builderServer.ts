@@ -4,6 +4,7 @@
  */
 import type { TrueForge, TrueForgeApi } from '@truefoundry/trueforge-sdk';
 import type { AgentBuilderServer, AgentLibraryEntry, ModelSelection, SearchAgentsParams } from '../../server/types.js';
+import { AGENTS_PAGE_DEFAULT, clampAgentsPageSize, drainAgentsList, listAgentsPage } from './agentsList.js';
 import { toUiConnectorFromReadEntry, toUiTool } from './catalogs/connectorCatalog.js';
 import { toHarnessAgentSpec, toUiAgentSpec } from './chatServer.js';
 import { createTrueForgeClient, type CreateTrueForgeClientOptions } from './client.js';
@@ -56,6 +57,7 @@ function toLibraryEntry(agent: TrueForgeApi.Agent): AgentLibraryEntry {
   return {
     name: agent.name,
     agentId: agent.id,
+    description: agent.description,
     agentSpec: toUiAgentSpec(agent.manifest),
     createdBySubject: agent.createdBySubject,
   };
@@ -120,34 +122,47 @@ export function createHarnessBuilderServer(
     },
 
     async searchAgents(req?: SearchAgentsParams) {
-      const { data } = await client.agents.list();
-      const query = req?.query?.trim().toLowerCase();
-      const filtered =
-        query === undefined || query === '' ? data : data.filter(agent => agent.name.toLowerCase().includes(query));
+      const limit = clampAgentsPageSize(req?.limit ?? AGENTS_PAGE_DEFAULT);
       const offset = req?.offset ?? 0;
-      const limit = req?.limit ?? 50;
-      return filtered.slice(offset, offset + limit).map(toLibraryEntry);
+      const query = req?.query?.trim();
+      const rows = await listAgentsPage({
+        client,
+        limit,
+        offset,
+        ...(query === undefined || query === '' ? {} : { agentName: query }),
+      });
+      return rows.map(toLibraryEntry);
     },
 
-    async saveAgent({ agentName, agentSpec, intent }) {
-      // TODO: TrueForge currently drops AgentSpec.description until its schema supports it.
+    async saveAgent({ agentName, description: descriptionRaw, agentSpec, intent }) {
       const manifest = toHarnessAgentSpec(agentSpec);
+      const description = descriptionRaw?.trim();
       if (intent === 'update') {
-        const { data } = await client.agents.list();
-        const existing = data.find(agent => agent.name === agentName);
+        const agents = await drainAgentsList(client);
+        const existing = agents.find(agent => agent.name === agentName);
         if (!existing) {
           return {};
         }
-        await client.agents.update(existing.id, { manifest });
+        // Omit empty description on update so a reloaded draft (no description in session
+        // manifest) preserves the stored value instead of failing min(1).
+        await client.agents.update(existing.id, {
+          ...(description ? { description } : {}),
+          manifest,
+        });
         return { agentId: existing.id };
       }
-      const created = await client.agents.create({ name: agentName, manifest });
+      // Create requires description; fall back to name for clone of pre-description agents.
+      const created = await client.agents.create({
+        name: agentName,
+        description: description || agentName,
+        manifest,
+      });
       return { agentId: created.data.id };
     },
 
     async deleteAgent({ agentName }) {
-      const { data } = await client.agents.list();
-      const existing = data.find(agent => agent.name === agentName);
+      const agents = await drainAgentsList(client);
+      const existing = agents.find(agent => agent.name === agentName);
       if (!existing) return;
       await client.agents.delete(existing.id);
     },

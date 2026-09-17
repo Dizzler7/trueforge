@@ -7,6 +7,7 @@ import {
 } from '@truefoundry/assistant-ui-runtime';
 import { useRef, useState } from 'react';
 
+import { useCanCreateAgent } from '../hooks/useCanCreateAgent.js';
 import { useSaveAgentVisible } from '../hooks/useChatChromeActionsVisible.js';
 import { useResourcePermissions } from '../hooks/useResourcePermissions.js';
 import { Icon } from '../icons/Icon.js';
@@ -18,6 +19,8 @@ import { getErrorMessage } from '../utils/getErrorMessage.js';
 import { useOptionalAgentConfigInstructions } from './draft/AgentConfigInstructionsContext.js';
 import { Button } from './primitives/Button.js';
 import { SideDrawer } from './primitives/SideDrawer.js';
+
+const NO_CREATE_AGENT_PERMISSION_MESSAGE = 'No permission to create agents';
 
 type SaveIntent = 'create' | 'update';
 
@@ -79,6 +82,7 @@ function SaveAgentButtonContent({
     resourceIds: agentId == null ? [] : [agentId],
   });
   const canManageAgent = allows(agentId, 'MANAGE');
+  const { canCreateAgent, loading: createAgentPermissionLoading } = useCanCreateAgent();
   const configInstructions = useOptionalAgentConfigInstructions();
   const SaveAgentForm = useSlot('SaveAgentForm');
   const PermissionGuard = useSlot('PermissionGuard');
@@ -86,20 +90,29 @@ function SaveAgentButtonContent({
   const [open, setOpen] = useState(false);
   const [intent, setIntent] = useState<SaveIntent>('create');
   const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
   const [draftSpec, setDraftSpec] = useState<AgentSpec | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const isUpdateMode =
+    shell?.mode.status === 'active' &&
+    shell.mode.isMutable &&
+    (shell.mode.agentName !== undefined || shell.mode.agentId !== undefined);
+  const canCreate = canCreateAgent && !createAgentPermissionLoading;
+  const canTrigger = isUpdateMode ? canManageAgent : canCreate;
+
   const close = () => {
     if (saving) return;
     setOpen(false);
+    setDescription('');
     setDraftSpec(null);
     setError(null);
   };
 
   const show = async () => {
     if (agentSpecRef.current === null || builder === null) return;
-    if (agentId != null && !canManageAgent) return;
+    if (isUpdateMode ? !canManageAgent : !canCreate) return;
     setError(null);
     configInstructions?.flush();
     await flushAgentSpec();
@@ -111,20 +124,24 @@ function SaveAgentButtonContent({
     const currentName = shell?.mode.status === 'active' ? (shell.mode.agentName ?? shell.mode.agentId ?? '') : '';
     setIntent(currentName ? 'update' : 'create');
     setName(currentName);
+    setDescription(currentName && shell?.mode.status === 'active' ? (shell.mode.description ?? '') : '');
     setDraftSpec(cloneAgentSpec(latestAgentSpec));
     setOpen(true);
   };
 
   const save = async () => {
     if (builder === null || draftSpec === null) return;
-    if (intent === 'update' && !canManageAgent) return;
+    if (intent === 'update' ? !canManageAgent : !canCreate) return;
     const normalizedName = name.trim();
     if (!normalizedName || !draftSpec.model.name.trim()) return;
+    const normalizedDescription = description.trim();
+    if (!normalizedDescription) return;
     setSaving(true);
     setError(null);
     try {
       const result = await builder.saveAgent({
         agentName: normalizedName,
+        ...(normalizedDescription ? { description: normalizedDescription } : {}),
         agentSpec: draftSpec,
         intent,
         sessionId: draftSessionId,
@@ -133,10 +150,12 @@ function SaveAgentButtonContent({
       shell?.bindMutableAgent({
         agentId: result.agentId ?? normalizedName,
         agentName: normalizedName,
+        ...(normalizedDescription ? { description: normalizedDescription } : {}),
         agentSpec: draftSpec,
       });
       shell?.invalidateAgentsList();
       setOpen(false);
+      setDescription('');
       setDraftSpec(null);
     } catch (caught) {
       setError(getErrorMessage(caught, 'Could not save agent'));
@@ -145,17 +164,16 @@ function SaveAgentButtonContent({
     }
   };
 
-  const isUpdateMode =
-    shell?.mode.status === 'active' &&
-    shell.mode.isMutable &&
-    (shell.mode.agentName !== undefined || shell.mode.agentId !== undefined);
   const triggerLabel = isUpdateMode && children === 'Save Agent' ? 'Update Agent' : children;
 
   if (!visible) return null;
 
   return (
     <>
-      <PermissionGuard allowed={canManageAgent}>
+      <PermissionGuard
+        allowed={canTrigger}
+        deniedMessage={isUpdateMode ? undefined : NO_CREATE_AGENT_PERMISSION_MESSAGE}
+      >
         <Button.Primary
           type="button"
           size="large"
@@ -180,11 +198,12 @@ function SaveAgentButtonContent({
           <SaveAgentForm
             intent={intent}
             name={name}
+            description={description}
             spec={draftSpec}
             saving={saving}
             error={error}
             onNameChange={setName}
-            onChange={setDraftSpec}
+            onDescriptionChange={setDescription}
             onCancel={close}
             onSave={() => void save()}
           />

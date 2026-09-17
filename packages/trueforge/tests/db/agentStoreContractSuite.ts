@@ -30,12 +30,14 @@ export function runAgentStoreContractSuite(getStore: () => IAgentStore): void {
       tenant_id: TENANT,
       created_by_subject: CREATED_BY_SUBJECT,
       name: 'research',
+      description: 'Research helper.',
       manifest: manifest(),
       external_id: null,
     });
 
     expect(created.tenant_id).toBe(TENANT);
     expect(created.name).toBe('research');
+    expect(created.description).toBe('Research helper.');
     expect(created.id.length).toBeGreaterThan(0);
     expect(created.manifest).toEqual(manifest());
     expect(created.external_id).toBeNull();
@@ -62,6 +64,7 @@ export function runAgentStoreContractSuite(getStore: () => IAgentStore): void {
       tenant_id: TENANT,
       created_by_subject: CREATED_BY_SUBJECT,
       name: 'research',
+      description: 'Research helper.',
       manifest: manifest(),
       external_id: null,
     });
@@ -70,6 +73,7 @@ export function runAgentStoreContractSuite(getStore: () => IAgentStore): void {
     const updated = await store.updateAgent({
       tenant_id: TENANT,
       id: created.id,
+      description: 'Updated research helper.',
       manifest: replacement,
     });
 
@@ -77,6 +81,7 @@ export function runAgentStoreContractSuite(getStore: () => IAgentStore): void {
       expect.objectContaining({
         id: created.id,
         name: 'research',
+        description: 'Updated research helper.',
         manifest: replacement,
         created_at: created.created_at,
       }),
@@ -107,6 +112,7 @@ export function runAgentStoreContractSuite(getStore: () => IAgentStore): void {
       tenant_id: TENANT,
       created_by_subject: CREATED_BY_SUBJECT,
       name: 'research',
+      description: 'Test agent.',
       manifest: manifest(),
       external_id: null,
     });
@@ -116,6 +122,7 @@ export function runAgentStoreContractSuite(getStore: () => IAgentStore): void {
         tenant_id: TENANT,
         created_by_subject: CREATED_BY_SUBJECT,
         name: 'research',
+        description: 'Test agent.',
         manifest: manifest(),
         external_id: null,
       }),
@@ -128,6 +135,7 @@ export function runAgentStoreContractSuite(getStore: () => IAgentStore): void {
       tenant_id: TENANT,
       created_by_subject: CREATED_BY_SUBJECT,
       name: 'zeta',
+      description: 'Test agent.',
       manifest: manifest(),
       external_id: null,
     });
@@ -135,6 +143,7 @@ export function runAgentStoreContractSuite(getStore: () => IAgentStore): void {
       tenant_id: TENANT,
       created_by_subject: CREATED_BY_SUBJECT,
       name: 'alpha',
+      description: 'Test agent.',
       manifest: manifest({ instructions: 'Alpha agent.' }),
       external_id: null,
     });
@@ -142,13 +151,19 @@ export function runAgentStoreContractSuite(getStore: () => IAgentStore): void {
       tenant_id: 'other-tenant',
       created_by_subject: CREATED_BY_SUBJECT,
       name: 'research',
+      description: 'Test agent.',
       manifest: manifest(),
       external_id: null,
     });
 
-    const agents = await store.listAgents({ tenant_id: TENANT });
-    expect(agents.map(agent => agent.name)).toEqual(['alpha', 'zeta']);
-    expect(agents.every(agent => agent.tenant_id === TENANT)).toBe(true);
+    const agents = await store.listAgents({
+      tenant_id: TENANT,
+      agent_name: undefined,
+      limit: undefined,
+      page_token: undefined,
+    });
+    expect(agents.data.map(agent => agent.name)).toEqual(['alpha', 'zeta']);
+    expect(agents.data.every(agent => agent.tenant_id === TENANT)).toBe(true);
   });
 
   it('listAgents can filter by external_ids', async () => {
@@ -157,6 +172,7 @@ export function runAgentStoreContractSuite(getStore: () => IAgentStore): void {
       tenant_id: TENANT,
       created_by_subject: CREATED_BY_SUBJECT,
       name: 'local-only',
+      description: 'Test agent.',
       manifest: manifest(),
       external_id: null,
     });
@@ -164,6 +180,7 @@ export function runAgentStoreContractSuite(getStore: () => IAgentStore): void {
       tenant_id: TENANT,
       created_by_subject: CREATED_BY_SUBJECT,
       name: 'linked',
+      description: 'Test agent.',
       manifest: manifest(),
       external_id: 'sf-agent-1',
     });
@@ -171,18 +188,141 @@ export function runAgentStoreContractSuite(getStore: () => IAgentStore): void {
       tenant_id: TENANT,
       created_by_subject: CREATED_BY_SUBJECT,
       name: 'other-linked',
+      description: 'Test agent.',
       manifest: manifest(),
       external_id: 'sf-agent-2',
     });
 
-    expect(await store.listAgents({ tenant_id: TENANT, external_ids: ['sf-agent-1'] })).toEqual([linked]);
     expect(
-      (await store.listAgents({ tenant_id: TENANT, external_ids: ['sf-agent-1', 'sf-agent-2'] })).map(
-        agent => agent.name,
-      ),
+      await store.listAgents({
+        tenant_id: TENANT,
+        external_ids: ['sf-agent-1'],
+        agent_name: undefined,
+        limit: undefined,
+        page_token: undefined,
+      }),
+    ).toEqual({ data: [linked], pagination: { limit: 1 } });
+    expect(
+      (
+        await store.listAgents({
+          tenant_id: TENANT,
+          external_ids: ['sf-agent-1', 'sf-agent-2'],
+          agent_name: undefined,
+          limit: undefined,
+          page_token: undefined,
+        })
+      ).data.map(agent => agent.name),
     ).toEqual(['linked', 'other-linked']);
-    expect(await store.listAgents({ tenant_id: TENANT, external_ids: ['missing'] })).toEqual([]);
-    expect(await store.listAgents({ tenant_id: TENANT, external_ids: [] })).toEqual([]);
+    expect(
+      await store.listAgents({
+        tenant_id: TENANT,
+        external_ids: ['missing'],
+        agent_name: undefined,
+        limit: undefined,
+        page_token: undefined,
+      }),
+    ).toEqual({ data: [], pagination: { limit: 0 } });
+    expect(
+      await store.listAgents({
+        tenant_id: TENANT,
+        external_ids: [],
+        agent_name: undefined,
+        limit: undefined,
+        page_token: undefined,
+      }),
+    ).toEqual({ data: [], pagination: { limit: 0 } });
+  });
+
+  it('listAgents filters by agent_name substring case-insensitively', async () => {
+    const store = getStore();
+    await store.createAgent({
+      tenant_id: TENANT,
+      created_by_subject: CREATED_BY_SUBJECT,
+      name: 'alpha-bot',
+      description: 'Test agent.',
+      manifest: manifest(),
+      external_id: null,
+    });
+    await store.createAgent({
+      tenant_id: TENANT,
+      created_by_subject: CREATED_BY_SUBJECT,
+      name: 'bravo-bot',
+      description: 'Test agent.',
+      manifest: manifest(),
+      external_id: null,
+    });
+    await store.createAgent({
+      tenant_id: TENANT,
+      created_by_subject: CREATED_BY_SUBJECT,
+      name: 'unrelated',
+      description: 'Test agent.',
+      manifest: manifest(),
+      external_id: null,
+    });
+
+    const matched = await store.listAgents({
+      tenant_id: TENANT,
+      agent_name: 'BOT',
+      limit: undefined,
+      page_token: undefined,
+    });
+    expect(matched.data.map(agent => agent.name)).toEqual(['alpha-bot', 'bravo-bot']);
+
+    const none = await store.listAgents({
+      tenant_id: TENANT,
+      agent_name: 'missing',
+      limit: undefined,
+      page_token: undefined,
+    });
+    expect(none.data).toEqual([]);
+  });
+
+  it('listAgents paginates with limit and page_token in name order', async () => {
+    const store = getStore();
+    await store.createAgent({
+      tenant_id: TENANT,
+      created_by_subject: CREATED_BY_SUBJECT,
+      name: 'charlie',
+      description: 'Test agent.',
+      manifest: manifest(),
+      external_id: null,
+    });
+    await store.createAgent({
+      tenant_id: TENANT,
+      created_by_subject: CREATED_BY_SUBJECT,
+      name: 'alpha',
+      description: 'Test agent.',
+      manifest: manifest(),
+      external_id: null,
+    });
+    await store.createAgent({
+      tenant_id: TENANT,
+      created_by_subject: CREATED_BY_SUBJECT,
+      name: 'bravo',
+      description: 'Test agent.',
+      manifest: manifest(),
+      external_id: null,
+    });
+
+    const page1 = await store.listAgents({
+      tenant_id: TENANT,
+      agent_name: undefined,
+      limit: 2,
+      page_token: undefined,
+    });
+    expect(page1.data.map(agent => agent.name)).toEqual(['alpha', 'bravo']);
+    expect(page1.pagination.limit).toBe(2);
+    expect(page1.pagination.next_page_token).toEqual(expect.any(String));
+
+    const page2 = await store.listAgents({
+      tenant_id: TENANT,
+      agent_name: undefined,
+      limit: 2,
+      page_token: page1.pagination.next_page_token,
+    });
+    expect(page2.data.map(agent => agent.name)).toEqual(['charlie']);
+    expect(page2.pagination.previous_page_token).toEqual(expect.any(String));
+    expect(page2.pagination.next_page_token).toBeUndefined();
   });
 
   it('getAgent by id is tenant-scoped', async () => {
@@ -191,6 +331,7 @@ export function runAgentStoreContractSuite(getStore: () => IAgentStore): void {
       tenant_id: TENANT,
       created_by_subject: CREATED_BY_SUBJECT,
       name: 'research',
+      description: 'Test agent.',
       manifest: manifest(),
       external_id: null,
     });
@@ -204,6 +345,7 @@ export function runAgentStoreContractSuite(getStore: () => IAgentStore): void {
       tenant_id: TENANT,
       created_by_subject: CREATED_BY_SUBJECT,
       name: 'research',
+      description: 'Test agent.',
       manifest: manifest(),
       external_id: 'sf-agent-1',
     });
@@ -217,6 +359,7 @@ export function runAgentStoreContractSuite(getStore: () => IAgentStore): void {
       tenant_id: TENANT,
       created_by_subject: CREATED_BY_SUBJECT,
       name: 'alpha',
+      description: 'Test agent.',
       manifest: manifest(),
       external_id: 'shared-key',
     });
@@ -225,6 +368,7 @@ export function runAgentStoreContractSuite(getStore: () => IAgentStore): void {
         tenant_id: TENANT,
         created_by_subject: CREATED_BY_SUBJECT,
         name: 'beta',
+        description: 'Test agent.',
         manifest: manifest(),
         external_id: 'shared-key',
       }),
@@ -233,6 +377,7 @@ export function runAgentStoreContractSuite(getStore: () => IAgentStore): void {
       tenant_id: 'other-tenant',
       created_by_subject: CREATED_BY_SUBJECT,
       name: 'alpha',
+      description: 'Test agent.',
       manifest: manifest(),
       external_id: 'shared-key',
     });
@@ -240,6 +385,7 @@ export function runAgentStoreContractSuite(getStore: () => IAgentStore): void {
       tenant_id: TENANT,
       created_by_subject: CREATED_BY_SUBJECT,
       name: 'gamma',
+      description: 'Test agent.',
       manifest: manifest(),
       external_id: null,
     });
@@ -247,6 +393,7 @@ export function runAgentStoreContractSuite(getStore: () => IAgentStore): void {
       tenant_id: TENANT,
       created_by_subject: CREATED_BY_SUBJECT,
       name: 'delta',
+      description: 'Test agent.',
       manifest: manifest(),
       external_id: null,
     });
@@ -258,6 +405,7 @@ export function runAgentStoreContractSuite(getStore: () => IAgentStore): void {
       tenant_id: TENANT,
       created_by_subject: CREATED_BY_SUBJECT,
       name: 'research',
+      description: 'Test agent.',
       manifest: manifest(),
       external_id: null,
     });
@@ -281,6 +429,7 @@ export function runAgentStoreContractSuite(getStore: () => IAgentStore): void {
       tenant_id: TENANT,
       created_by_subject: CREATED_BY_SUBJECT,
       name: 'alpha',
+      description: 'Test agent.',
       manifest: manifest(),
       external_id: 'shared-key',
     });
@@ -288,6 +437,7 @@ export function runAgentStoreContractSuite(getStore: () => IAgentStore): void {
       tenant_id: TENANT,
       created_by_subject: CREATED_BY_SUBJECT,
       name: 'beta',
+      description: 'Test agent.',
       manifest: manifest(),
       external_id: null,
     });

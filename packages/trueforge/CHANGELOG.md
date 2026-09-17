@@ -1,5 +1,76 @@
 # @truefoundry/trueforge
 
+## 0.2.0-rc.12
+
+### Patch Changes
+
+- 584e815: Gate Save Agent (create) on tenant CREATE from list-permissions, keep Update Agent on agent MANAGE, unwrap `{ type, permissions }`, and bump `@truefoundry/assistant-ui-runtime` to `0.1.39`.
+- ffcd60d: Forward inbound `x-tfy-metadata` from create-turn to TrueFoundry-mode gateway calls, merged with harness session, turn, and agent ids.
+- c221ac6: Fail Postgres connects after 10s and log idle pool errors so a backend restart cannot crash the process.
+- 7dc8757: Log while connecting to Postgres and Redis on startup, and skip access logs for `/assets/`.
+- c4078c6: Apply Postgres TLS via Pool `ssl` like servicefoundry (`POSTGRES_SSL_MODE` + cert/key/CA paths), not `sslmode` on the URL.
+- Updated dependencies [01ee934]
+- Updated dependencies [2cb51a5]
+- Updated dependencies [bf5233d]
+  - @truefoundry/trueforge-core@0.2.0-rc.5
+
+## 0.2.0-rc.11
+
+### Patch Changes
+
+- fd1bf7f: Bump `@truefoundry/assistant-ui-runtime` to `0.1.38` for assistant completion timestamps and keep-alive turn streams on session switch.
+- 9846d6d: Add Python TrueForge SDK stream and non-stream samples to agent Use in Code snippets, merging deltas with is_event_delta / merge_event_delta.
+- c77e7df: TrueFoundry mode: optional `TRUEFOUNDRY_TENANT_ID_TO_ALLOWED_MODEL_PROVIDER_ACCOUNTS` JSON map of tenant id → provider account names to limit which virtual providers are listed per tenant.
+- Updated dependencies [648273b]
+- Updated dependencies [134dcb9]
+  - @truefoundry/trueforge-sdk@0.2.0-rc.8
+
+## 0.2.0-rc.10
+
+### Patch Changes
+
+- Updated dependencies [648273b]
+  - @truefoundry/trueforge-sdk@0.2.0-rc.7
+
+## 0.2.0-rc.9
+
+### Patch Changes
+
+- 6c12e59: Constrain ResourceName (NameSchema) to hyphen-only 2–64 and migrate existing "."/"_" names.
+- Updated dependencies [648273b]
+  - @truefoundry/trueforge-sdk@0.2.0-rc.6
+
+## 0.2.0-rc.8
+
+### Patch Changes
+
+- 5bc13d0: Pass TrueFoundry agents metadata through TrueFoundry agent import.
+
+## 0.2.0-rc.7
+
+### Patch Changes
+
+- 5bc13d0: Pass collaborators through TrueFoundry agent import.
+
+## 0.2.0-rc.6
+
+### Minor Changes
+
+- 0453157: Use ServiceFoundry dual vend-token response: authenticate as the agent for registry lookups, and as the user (with agent in `act`) for MCP authorize/auth status, gateway model api_key, and MCP invoke.
+
+### Patch Changes
+
+- 8c31eae: Persist top-level agent description and sync it to ServiceFoundry on create/update.
+- 4e3b5be: Forward session, turn, and agent context as `x-tfy-metadata` on TrueFoundry-mode model and MCP gateway calls.
+- 9501536: Make MCPServerManifest a type-discriminated oneOf of RemoteMCPServerManifest and TrueFoundryMCPServerManifest.
+- dc2151f: Paginate `GET /api/v1/agents` with `limit` / `page_token` and a `pagination` envelope; optional `agent_name` filters by case-insensitive substring. Agents library uses rows-per-page and prev/next against the token-paginated API. Schedule create and the schedules listing agent filter use a searchable agent combobox backed by the same filtered list API.
+- Updated dependencies [648273b]
+- Updated dependencies [9501536]
+- Updated dependencies [dc2151f]
+- Updated dependencies [ba79ce5]
+  - @truefoundry/trueforge-sdk@0.2.0-rc.5
+  - @truefoundry/trueforge-core@0.2.0-rc.4
+
 ## 0.2.0-rc.5
 
 ### Patch Changes

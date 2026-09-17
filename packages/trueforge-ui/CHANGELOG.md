@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.3.0-rc.10
+
+### Patch Changes
+
+- 584e815: Gate Save Agent (create) on tenant CREATE from list-permissions, keep Update Agent on agent MANAGE, unwrap `{ type, permissions }`, and bump `@truefoundry/assistant-ui-runtime` to `0.1.39`.
+
+## 0.3.0-rc.9
+
+### Patch Changes
+
+- fd1bf7f: Bump `@truefoundry/assistant-ui-runtime` to `0.1.38` for assistant completion timestamps and keep-alive turn streams on session switch.
+- 079f832: Show an optional tooltip when sandbox artifact downloads are read-only.
+- Updated dependencies [648273b]
+- Updated dependencies [134dcb9]
+  - @truefoundry/trueforge-sdk@0.2.0-rc.8
+
+## 0.3.0-rc.8
+
+### Patch Changes
+
+- Updated dependencies [648273b]
+  - @truefoundry/trueforge-sdk@0.2.0-rc.7
+
+## 0.3.0-rc.7
+
+### Patch Changes
+
+- 531f0ce: Keep close-on-click dropdown menus and bottom sheets open when a click or drag lands on their own scrollbar, so scrolling a long menu no longer dismisses it before a choice is made.
+- 531f0ce: Cap the skill version menu height and scroll it, so skills with many versions no longer run off screen. While it is open, scrolling is confined to the menu.
+- Updated dependencies [648273b]
+  - @truefoundry/trueforge-sdk@0.2.0-rc.6
+
+## 0.3.0-rc.6
+
+### Patch Changes
+
+- 8c31eae: Round-trip agent description through save/load and show it in the library and agent details.
+- d7136a1: Avatar fallbacks use a light primary-button gradient in light mode, a solid primary gradient in dark mode, and show a single initial character.
+- d7136a1: Assistant message loading indicator uses ThinkingOrb with left-to-right shimmering Working... text.
+- b316430: Slide SideDrawer/BottomSheet and add a light fade+scale enter on dropdowns and popup cards.
+- dc2151f: Paginate `GET /api/v1/agents` with `limit` / `page_token` and a `pagination` envelope; optional `agent_name` filters by case-insensitive substring. Agents library uses rows-per-page and prev/next against the token-paginated API. Schedule create and the schedules listing agent filter use a searchable agent combobox backed by the same filtered list API.
+- d7136a1: Flip PopoverSelect menus when the preferred side lacks viewport room (e.g. table rows-per-page).
+- 04460fb: Prevent the schedule search field from shrinking and clipping its placeholder.
+- fa0730b: Reduce the agent code snippet font size to match its surrounding controls.
+- d7136a1: Stop draining the full agents catalog on Schedules mount; load agents only when the filter opens (infinite scroll).
+- d7136a1: Settings sidebar uses a subtle primary tint for the selected section instead of a solid fill.
+- Updated dependencies [648273b]
+- Updated dependencies [9501536]
+- Updated dependencies [dc2151f]
+  - @truefoundry/trueforge-sdk@0.2.0-rc.5
+
 ## 0.3.0-rc.5
 
 ### Patch Changes
