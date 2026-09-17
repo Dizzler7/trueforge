@@ -241,6 +241,7 @@ function ThreadListItemRow({
           void persistRename();
         }}
         onRenameCancel={() => {
+          if (renameSaving) return;
           skipRenameBlurRef.current = true;
           setRenaming(false);
         }}

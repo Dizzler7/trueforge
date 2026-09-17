@@ -65,7 +65,7 @@ function ThreadListRowOverride({
         <input
           aria-label="Session title"
           value={renameValue ?? title}
-          disabled={renameSaving}
+          readOnly={renameSaving}
           onChange={event => onRenameValueChange?.(event.target.value)}
           onBlur={() => onRenameBlur?.()}
           onKeyDown={event => {
@@ -506,6 +506,49 @@ describe('ThreadListContainer', () => {
     });
     expect(onRename).not.toHaveBeenCalled();
     expect(screen.getByText('Remote session')).toBeInTheDocument();
+  });
+
+  it('ignores Escape while rename is saving', async () => {
+    let resolveRename: (() => void) | undefined;
+    const onRename = vi.fn(
+      () =>
+        new Promise<void>(resolve => {
+          resolveRename = resolve;
+        }),
+    );
+
+    renderThreadList({
+      adapter: {
+        threadId: 'thread-1',
+        threads: [
+          {
+            status: 'regular',
+            id: 'thread-1',
+            remoteId: 'session-1',
+            title: 'Remote session',
+          },
+        ],
+        onRename,
+      },
+      canRename: true,
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Session actions' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+    const titleInput = screen.getByRole('textbox', { name: 'Session title' });
+    fireEvent.change(titleInput, { target: { value: 'Updated title' } });
+    fireEvent.keyDown(titleInput, { key: 'Enter' });
+
+    await waitFor(() => {
+      expect(titleInput).toHaveAttribute('readonly');
+    });
+    fireEvent.keyDown(titleInput, { key: 'Escape' });
+    expect(titleInput).toBeInTheDocument();
+
+    resolveRename?.();
+    await waitFor(() => {
+      expect(screen.queryByRole('textbox', { name: 'Session title' })).not.toBeInTheDocument();
+    });
   });
 
   it('toasts when rename fails and closes the inline editor', async () => {
