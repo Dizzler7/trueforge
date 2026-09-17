@@ -5706,6 +5706,7 @@
         "tags": [
           "Internal"
         ],
+        "x-excluded": true,
         "x-fern-ignore": true
       }
     },
@@ -5761,6 +5762,7 @@
         "tags": [
           "Internal"
         ],
+        "x-excluded": true,
         "x-fern-ignore": true
       }
     },
@@ -5823,6 +5825,7 @@
         "tags": [
           "Internal"
         ],
+        "x-excluded": true,
         "x-fern-ignore": true
       }
     },
@@ -5875,6 +5878,7 @@
         "tags": [
           "Internal"
         ],
+        "x-excluded": true,
         "x-fern-sdk-group-name": [
           "internal"
         ],
@@ -5900,6 +5904,7 @@
         "tags": [
           "Internal"
         ],
+        "x-excluded": true,
         "x-fern-sdk-group-name": [
           "internal",
           "metrics"
@@ -5981,6 +5986,7 @@
         "tags": [
           "Internal"
         ],
+        "x-excluded": true,
         "x-fern-sdk-group-name": [
           "internal",
           "metrics"
@@ -6053,6 +6059,7 @@
         "tags": [
           "Internal"
         ],
+        "x-excluded": true,
         "x-fern-sdk-group-name": [
           "internal",
           "metrics"
@@ -6112,6 +6119,7 @@
         "tags": [
           "Internal"
         ],
+        "x-excluded": true,
         "x-fern-sdk-group-name": [
           "internal",
           "schedules"
@@ -6198,6 +6206,7 @@
         "tags": [
           "Internal"
         ],
+        "x-excluded": true,
         "x-fern-sdk-group-name": [
           "internal",
           "sessions"
