@@ -184,7 +184,7 @@ function lastAssistantInContext(context: ContextMessage[]): InternalEnrichedAssi
 // since it mutates (deletes) the closable ids.
 function getUnclosableOpenToolCallIds(context: ContextMessage[], openToolCallIds: Set<string>): Set<string> {
   const blockingOpenToolCallIds = new Set(openToolCallIds);
-  for (const id of getClosableOpenToolCallIds(context)) {
+  for (const id of getClosableOpenToolCallIds({ context, userMessageIncoming: false })) {
     blockingOpenToolCallIds.delete(id);
   }
   return blockingOpenToolCallIds;
@@ -599,7 +599,9 @@ export class AgentThread {
 
     this.contextBusy = true;
     try {
-      for await (const event of this.executeContextProcessors('preSend')) {
+      for await (const event of this.executeContextProcessors('preSend', {
+        userMessageIncoming: messages.some(isInputUserMessage),
+      })) {
         yield event;
       }
       this.preSendRanThisTurn = true;
@@ -876,7 +878,10 @@ export class AgentThread {
     };
   }
 
-  private executeContextProcessors(hook: 'preSend'): AsyncGenerator<AgentThreadAppendContext, void, unknown>;
+  private executeContextProcessors(
+    hook: 'preSend',
+    options: { userMessageIncoming: boolean },
+  ): AsyncGenerator<AgentThreadAppendContext, void, unknown>;
   private executeContextProcessors(
     hook: 'preLLM' | 'postToolCall',
   ): AsyncGenerator<
@@ -889,6 +894,7 @@ export class AgentThread {
   >;
   private async *executeContextProcessors(
     hook: 'preSend' | 'preLLM' | 'postToolCall',
+    options?: { userMessageIncoming: boolean },
   ): AsyncGenerator<
     | ThreadOverwriteContextEvent
     | AgentThreadAppendContext
@@ -902,7 +908,10 @@ export class AgentThread {
     ) => AsyncIterable<AgentContextProcessorOutput>)[];
     switch (hook) {
       case 'preSend':
-        processors = this.preSendContextProcessors.map(p => p.processPreSend.bind(p));
+        processors = this.preSendContextProcessors.map(
+          p => (execution: Readonly<AgentThreadExecutionContext>) =>
+            p.processPreSend(execution, { userMessageIncoming: options?.userMessageIncoming === true }),
+        );
         break;
       case 'preLLM':
         processors = this.preLLMContextProcessors.map(p => p.processPreLLM.bind(p));
@@ -1316,7 +1325,7 @@ export class AgentThread {
       }
 
       if (!this.preSendRanThisTurn) {
-        for await (const event of this.executeContextProcessors('preSend')) {
+        for await (const event of this.executeContextProcessors('preSend', { userMessageIncoming: false })) {
           yield event;
         }
       }
