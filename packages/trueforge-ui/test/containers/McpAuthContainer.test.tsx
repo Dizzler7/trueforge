@@ -110,10 +110,20 @@ describe('McpAuthContainer', () => {
   it('shows each successful catalog connection and resumes once all servers are connected', async () => {
     const resumeMcpAuth = vi.fn().mockResolvedValue(undefined);
     const authenticateConnector = vi.fn().mockResolvedValue({ status: 'AUTHENTICATED' });
+    const getConnector = vi.fn(async ({ id }: { id: string }) => ({
+      id,
+      name: id,
+      description: '',
+      url: 'https://example.test/mcp',
+      auth: { type: 'dcr' as const },
+      requiresAuth: false,
+      authenticated: true,
+    }));
     const catalog = createMockCatalog({
       connectorCatalog: {
         ...createMockCatalog().connectorCatalog,
         authenticateConnector,
+        getConnector,
       },
     });
     const server = createMockAgentUIServer({ catalog });
@@ -125,6 +135,7 @@ describe('McpAuthContainer', () => {
     fireEvent.click(firstConnect);
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Connected' })).toBeDisabled());
+    expect(getConnector).toHaveBeenCalled();
     expect(resumeMcpAuth).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
@@ -156,13 +167,56 @@ describe('McpAuthContainer', () => {
     expect(resumeMcpAuth).not.toHaveBeenCalled();
   });
 
-  it('allows retrying Continue when resume fails', async () => {
-    const resumeMcpAuth = vi.fn().mockRejectedValue(new Error('Resume failed'));
+  it('does not mark a server connected when AUTHENTICATED is not confirmed', async () => {
+    const resumeMcpAuth = vi.fn().mockResolvedValue(undefined);
     const authenticateConnector = vi.fn().mockResolvedValue({ status: 'AUTHENTICATED' });
+    const getConnector = vi.fn(async ({ id }: { id: string }) => ({
+      id,
+      name: id,
+      description: '',
+      url: 'https://example.test/mcp',
+      auth: { type: 'dcr' as const },
+      requiresAuth: true,
+      authenticated: false,
+    }));
     const catalog = createMockCatalog({
       connectorCatalog: {
         ...createMockCatalog().connectorCatalog,
         authenticateConnector,
+        getConnector,
+      },
+    });
+    const server = createMockAgentUIServer({ catalog });
+
+    render(
+      <McpAuthHarness pendingMcpAuth={{ mcpServers: [GITHUB_SERVER] }} resumeMcpAuth={resumeMcpAuth} server={server} />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
+
+    await waitFor(() => expect(getConnector).toHaveBeenCalledWith({ id: GITHUB_SERVER.id }));
+    expect(screen.getByRole('button', { name: 'Connect' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Connected' })).not.toBeInTheDocument();
+    expect(resumeMcpAuth).not.toHaveBeenCalled();
+  });
+
+  it('allows retrying Continue when resume fails', async () => {
+    const resumeMcpAuth = vi.fn().mockRejectedValue(new Error('Resume failed'));
+    const authenticateConnector = vi.fn().mockResolvedValue({ status: 'AUTHENTICATED' });
+    const getConnector = vi.fn(async ({ id }: { id: string }) => ({
+      id,
+      name: id,
+      description: '',
+      url: 'https://example.test/mcp',
+      auth: { type: 'dcr' as const },
+      requiresAuth: false,
+      authenticated: true,
+    }));
+    const catalog = createMockCatalog({
+      connectorCatalog: {
+        ...createMockCatalog().connectorCatalog,
+        authenticateConnector,
+        getConnector,
       },
     });
     const server = createMockAgentUIServer({ catalog });
