@@ -45,11 +45,10 @@ function agentThreadEventToTerminalFields(event: AgentThreadExecutionEvent): {
       if ('parent' in event && event.parent) {
         return {};
       }
-      // only a successful root completion becomes turn output
-      if (event.status !== 'done') {
-        return {};
+      if (event.status === 'done') {
+        return { output: event.output };
       }
-      return { output: event.output };
+      return {};
     }
     case EventType.TOOL_APPROVAL_REQUIRED:
     case EventType.TOOL_RESPONSE_REQUIRED:

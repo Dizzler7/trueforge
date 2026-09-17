@@ -296,7 +296,6 @@ function validateInputMessageTypesGivenContext(
   context: ContextMessage[],
   messages: AgentThreadRuntimeSendInput[],
 ): void {
-  const hasUserMessage = messages.some(isInputUserMessage);
   // Full open set: validates incoming tool responses and dedupes within the batch.
   const openToolCallIds = getOpenToolCallIds(context);
   const pendingApprovalIds = new Set(getPendingApprovalToolCalls(context).map(tc => tc.id));
@@ -324,9 +323,12 @@ function validateInputMessageTypesGivenContext(
     }
   }
 
-  // User messages interrupt pending approvals / client-side calls (OpenToolCallCloser
-  // synthesizes the missing responses). Empty and action batches still must resolve them all.
-  if (!hasUserMessage && (pendingApprovalIds.size > 0 || pendingClientSideIds.size > 0)) {
+  // User messages interrupt pending work (OpenToolCallCloser synthesizes responses).
+  if (messages.some(isInputUserMessage)) {
+    return;
+  }
+
+  if (pendingApprovalIds.size > 0 || pendingClientSideIds.size > 0) {
     const missing = [...pendingApprovalIds, ...pendingClientSideIds];
     throw new InvalidAgentSendInputError(
       `Send batch must resolve all pending tool calls awaiting user input. Missing: ${missing.join(', ')}`,
