@@ -1,6 +1,12 @@
+import { EventType } from '../../../src/core/events/schema';
 import type { InternalEnrichedAssistantMessage, InternalEnrichedToolCall } from '../../../src/core/llm/LLMTypes';
 import type { ContextMessage } from '../../../src/core/runtime/AgentThread.types';
-import { getClosableOpenToolCallIds } from '../../../src/core/runtime/OpenToolCallCloser';
+import { getEmptyCurrentContextUsage } from '../../../src/core/runtime/contextUsage';
+import {
+  getClosableOpenToolCallIds,
+  getClosableOpenToolCalls,
+  OpenToolCallCloser,
+} from '../../../src/core/runtime/OpenToolCallCloser';
 import '../harnessMocks';
 
 function makeToolCall(
@@ -104,5 +110,87 @@ describe('getClosableOpenToolCallIds', () => {
     expect(
       getClosableOpenToolCallIds({ context: [{ role: 'user', content: 'hello' }], userMessageIncoming: false }),
     ).toEqual(new Set());
+  });
+
+  it('closes approval, client-side, and thread-creation calls when a user message is incoming', () => {
+    const context = assistantWithToolCalls([
+      makeToolCall('tc-regular'),
+      makeToolCall('tc-approval', { is_approval_required: true }),
+      makeToolCall('tc-client', { is_client_side: true }),
+      makeToolCall('tc-sub-agent', { is_thread_creation: true }),
+    ]);
+    expect(getClosableOpenToolCalls({ context, userMessageIncoming: true })).toEqual([
+      { tool_call_id: 'tc-regular', close_kind: 'dangling' },
+      { tool_call_id: 'tc-approval', close_kind: 'user_action' },
+      { tool_call_id: 'tc-client', close_kind: 'user_action' },
+      { tool_call_id: 'tc-sub-agent', close_kind: 'thread_creation' },
+    ]);
+  });
+
+  it('still excludes already-resolved calls when a user message is incoming', () => {
+    const context: ContextMessage[] = [
+      ...assistantWithToolCalls([
+        makeToolCall('tc-approval', { is_approval_required: true }),
+        makeToolCall('tc-sub-agent', { is_thread_creation: true }),
+      ]),
+      { role: 'tool', tool_call_id: 'tc-approval', content: 'already closed' },
+    ];
+    expect(getClosableOpenToolCalls({ context, userMessageIncoming: true })).toEqual([
+      { tool_call_id: 'tc-sub-agent', close_kind: 'thread_creation' },
+    ]);
+  });
+});
+
+describe('OpenToolCallCloser.processPreSend', () => {
+  async function collectPreSend(context: ContextMessage[], userMessageIncoming: boolean) {
+    const closer = new OpenToolCallCloser();
+    const yielded = [];
+    for await (const event of closer.processPreSend(
+      {
+        threadId: 'main',
+        currentContextUsage: getEmptyCurrentContextUsage(),
+        context,
+      },
+      { userMessageIncoming },
+    )) {
+      yielded.push(event);
+    }
+    return yielded;
+  }
+
+  it('appends dangling dummy tool messages with no output events on resume', async () => {
+    const yielded = await collectPreSend(assistantWithToolCalls([makeToolCall('tc-1')]), false);
+    expect(yielded).toHaveLength(1);
+    expect(yielded[0]?.context).toEqual([
+      {
+        role: 'tool',
+        tool_call_id: 'tc-1',
+        content: JSON.stringify({ error: 'Tool call was not executed. Please retry this tool call.' }),
+      },
+    ]);
+    expect(yielded[0]?.output).toEqual([]);
+  });
+
+  it('emits tool.response events for user-action and thread-creation closures', async () => {
+    const yielded = await collectPreSend(
+      assistantWithToolCalls([
+        makeToolCall('tc-approval', { is_approval_required: true }),
+        makeToolCall('tc-sub-agent', { is_thread_creation: true }),
+      ]),
+      true,
+    );
+    expect(yielded).toHaveLength(1);
+    expect(yielded[0]?.output).toEqual([
+      expect.objectContaining({ type: EventType.TOOL_RESPONSE, tool_call_id: 'tc-approval', thread_id: 'main' }),
+      expect.objectContaining({ type: EventType.TOOL_RESPONSE, tool_call_id: 'tc-sub-agent', thread_id: 'main' }),
+    ]);
+  });
+
+  it('is idempotent after dummy responses are in context', async () => {
+    const context = assistantWithToolCalls([makeToolCall('tc-1')]);
+    const first = await collectPreSend(context, false);
+    const closed = [...context, ...(first[0]?.context ?? [])];
+    expect(await collectPreSend(closed, false)).toEqual([]);
+    expect(getClosableOpenToolCalls({ context: closed, userMessageIncoming: true })).toEqual([]);
   });
 });
