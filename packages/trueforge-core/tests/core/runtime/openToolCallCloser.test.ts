@@ -35,7 +35,7 @@ function assistantWithToolCalls(toolCalls: InternalEnrichedToolCall[]): ContextM
 describe('getClosableOpenToolCallIds', () => {
   it('closes ordinary dangling tool calls on the last assistant message', () => {
     const context = assistantWithToolCalls([makeToolCall('tc-1'), makeToolCall('tc-2')]);
-    expect(getClosableOpenToolCallIds(context)).toEqual(new Set(['tc-1', 'tc-2']));
+    expect(getClosableOpenToolCallIds({ context, userMessageIncoming: false })).toEqual(new Set(['tc-1', 'tc-2']));
   });
 
   it('excludes tool calls that already have a matching tool response', () => {
@@ -43,7 +43,7 @@ describe('getClosableOpenToolCallIds', () => {
       ...assistantWithToolCalls([makeToolCall('tc-1'), makeToolCall('tc-2')]),
       { role: 'tool', tool_call_id: 'tc-1', content: 'done' },
     ];
-    expect(getClosableOpenToolCallIds(context)).toEqual(new Set(['tc-2']));
+    expect(getClosableOpenToolCallIds({ context, userMessageIncoming: false })).toEqual(new Set(['tc-2']));
   });
 
   it('returns empty when any open call requires approval', () => {
@@ -51,7 +51,7 @@ describe('getClosableOpenToolCallIds', () => {
       makeToolCall('tc-ordinary'),
       makeToolCall('tc-approval', { is_approval_required: true }),
     ]);
-    expect(getClosableOpenToolCallIds(context)).toEqual(new Set());
+    expect(getClosableOpenToolCallIds({ context, userMessageIncoming: false })).toEqual(new Set());
   });
 
   it('returns empty when any open call is client-side', () => {
@@ -59,7 +59,7 @@ describe('getClosableOpenToolCallIds', () => {
       makeToolCall('tc-ordinary'),
       makeToolCall('tc-client', { is_client_side: true }),
     ]);
-    expect(getClosableOpenToolCallIds(context)).toEqual(new Set());
+    expect(getClosableOpenToolCallIds({ context, userMessageIncoming: false })).toEqual(new Set());
   });
 
   it('excludes thread-creation tool calls (is_thread_creation)', () => {
@@ -67,7 +67,7 @@ describe('getClosableOpenToolCallIds', () => {
       makeToolCall('tc-regular'),
       makeToolCall('tc-sub-agent', { is_thread_creation: true }),
     ]);
-    expect(getClosableOpenToolCallIds(context)).toEqual(new Set(['tc-regular']));
+    expect(getClosableOpenToolCallIds({ context, userMessageIncoming: false })).toEqual(new Set(['tc-regular']));
   });
 
   it('treats legacy sub-agent calls without is_thread_creation as ordinary closable calls', () => {
@@ -78,7 +78,9 @@ describe('getClosableOpenToolCallIds', () => {
         original_tool_name: 'create_sub_agent',
       }),
     ]);
-    expect(getClosableOpenToolCallIds(context)).toEqual(new Set(['tc-legacy-sub-agent']));
+    expect(getClosableOpenToolCallIds({ context, userMessageIncoming: false })).toEqual(
+      new Set(['tc-legacy-sub-agent']),
+    );
   });
 
   it('only inspects tool calls on the last assistant message', () => {
@@ -95,10 +97,12 @@ describe('getClosableOpenToolCallIds', () => {
         tool_calls: [makeToolCall('new-tc')],
       },
     ];
-    expect(getClosableOpenToolCallIds(context)).toEqual(new Set(['new-tc']));
+    expect(getClosableOpenToolCallIds({ context, userMessageIncoming: false })).toEqual(new Set(['new-tc']));
   });
 
   it('returns empty when there is no assistant message with tool calls', () => {
-    expect(getClosableOpenToolCallIds([{ role: 'user', content: 'hello' }])).toEqual(new Set());
+    expect(
+      getClosableOpenToolCallIds({ context: [{ role: 'user', content: 'hello' }], userMessageIncoming: false }),
+    ).toEqual(new Set());
   });
 });
