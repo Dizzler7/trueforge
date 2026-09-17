@@ -55,7 +55,15 @@ export const useMCPAuth = ({ callbackPath }: UseMCPAuthOptions = {}) => {
   );
 
   const openAuthPopup = useCallback(
-    (authorizationEndpoint: string, integrationId: string, callback: McpAuthCallback) => {
+    ({
+      authorizationEndpoint,
+      integrationId,
+      callback,
+    }: {
+      authorizationEndpoint: string;
+      integrationId: string;
+      callback: McpAuthCallback;
+    }) => {
       clearPopupListener();
 
       const channel = new BroadcastChannel(MCP_AUTH_POPUP_CHANNEL);
@@ -119,7 +127,7 @@ export const useMCPAuth = ({ callbackPath }: UseMCPAuthOptions = {}) => {
           throw new Error('The MCP server did not return an authorization URL.');
         }
 
-        openAuthPopup(authorizationEndpoint, integrationId, callback);
+        openAuthPopup({ authorizationEndpoint, integrationId, callback });
       } catch (error: unknown) {
         toaster?.showError(error);
         callback(false);
