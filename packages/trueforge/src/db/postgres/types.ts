@@ -6,7 +6,7 @@ import type {
   AgentSpec,
   CreatedBySubject,
   PersistedTurnEvent,
-  SendTurnEventItem,
+  SessionInboundEventItem,
   SessionMetadata,
   SessionMetrics,
   SessionSource,
@@ -258,7 +258,7 @@ export interface SessionInboundEventsTable {
   session_id: string;
   event_id: string;
   turn_id: string | null;
-  payload: JSONColumnType<SendTurnEventItem, SendTurnEventItem, SendTurnEventItem>;
+  payload: JSONColumnType<SessionInboundEventItem, SessionInboundEventItem, SessionInboundEventItem>;
   consumed: boolean;
   created_at: Date;
 }

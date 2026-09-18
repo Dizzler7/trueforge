@@ -11,7 +11,7 @@ import type { SessionRecord } from '../models/SessionRecord';
 import type { TurnRecord } from '../models/TurnRecord';
 import type { PersistedTurnEvent, SessionEventItem } from '../schemas/events';
 import type { TokenPagination } from '../schemas/pagination';
-import type { SendTurnEventItem } from '../schemas/sendEvent';
+import type { SessionInboundEventItem } from '../schemas/sendEvent';
 import type { SessionMetadata } from '../schemas/session';
 import type { CancellationReason, TerminalTurnState } from '../schemas/turn';
 
@@ -176,8 +176,8 @@ export interface SessionInboundEventRecord {
   event_id: string;
   /** Tip id when tip-scoped; null for session-only (e.g. future policies). */
   turn_id: string | null;
-  /** Validated {@link SendTurnEventItem} body (widens when policy lands). */
-  payload: SendTurnEventItem;
+  /** Validated {@link SessionInboundEventItem} body (widens when policy lands). */
+  payload: SessionInboundEventItem;
   /** ISO-8601; copied from insert input. Ordering uses `event_id`. */
   created_at: string;
 }
@@ -195,7 +195,7 @@ export interface InsertSessionInboundEventsInput {
    */
   events: Array<{
     event_id: string;
-    payload: SendTurnEventItem;
+    payload: SessionInboundEventItem;
     created_at: string;
   }>;
 }

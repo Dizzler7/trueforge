@@ -4,7 +4,7 @@ import type { SessionRecord } from '../models/SessionRecord';
 import type { TurnRecord, TurnSnapshot } from '../models/TurnRecord';
 import type { PersistedTurnEvent, SessionEventItem } from '../schemas/events';
 import type { TokenPagination } from '../schemas/pagination';
-import type { SendTurnEventItem } from '../schemas/sendEvent';
+import type { SessionInboundEventItem } from '../schemas/sendEvent';
 import type { TerminalTurnState } from '../schemas/turn';
 import { assertCreateTurnThreadDelta } from './assertCreateTurnThreadDelta';
 import type {
@@ -65,7 +65,7 @@ type StoredEvent = PersistedTurnEvent;
 interface StoredInboundEvent {
   event_id: string;
   turn_id: string | null;
-  payload: SendTurnEventItem;
+  payload: SessionInboundEventItem;
   created_at: string;
   consumed: boolean;
 }

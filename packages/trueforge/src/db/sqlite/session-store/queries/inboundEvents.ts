@@ -1,4 +1,4 @@
-import type { SendTurnEventItem, TurnState } from '@truefoundry/trueforge-core/agent-session';
+import type { SessionInboundEventItem, TurnState } from '@truefoundry/trueforge-core/agent-session';
 import type {
   InsertSessionInboundEventsInput,
   ListUnconsumedSessionInboundEventsInput,
@@ -111,7 +111,7 @@ export async function listUnconsumedSessionInboundEvents(
 
   let query = db
     .selectFrom('session_inbound_events')
-    .select(['event_id', 'turn_id', 'created_at', jsonText<SendTurnEventItem>(sql.ref('payload')).as('payload')])
+    .select(['event_id', 'turn_id', 'created_at', jsonText<SessionInboundEventItem>(sql.ref('payload')).as('payload')])
     .where('session_id', '=', input.session_id)
     .where('consumed', '=', 0);
 

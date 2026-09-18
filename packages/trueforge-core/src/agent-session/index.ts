@@ -21,8 +21,8 @@ export {
 } from './schemas/turn';
 export type { TerminalTurnState, Turn, TurnInputItem, TurnMetrics, TurnState } from './schemas/turn';
 
-export { SendTurnEventItemSchema } from './schemas/sendEvent';
-export type { SendTurnEventItem } from './schemas/sendEvent';
+export { SessionInboundEventItemSchema } from './schemas/sendEvent';
+export type { SessionInboundEventItem } from './schemas/sendEvent';
 
 export {
   SessionMetadataSchema,

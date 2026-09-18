@@ -3,15 +3,15 @@
  * stream log ({@link PersistedTurnEvent} / session_event).
  *
  * Public send is session-scoped (`POST …/sessions/{id}/events`) with required
- * body `turn_id` (one batch → one tip) plus `SendTurnEventItem`s; rows stamp that
+ * body `turn_id` (one batch → one tip) plus `SessionInboundEventItem`s; rows stamp that
  * tip id. v1 union is tip-only; approval policies may relax `turn_id` later.
  * `user.message` stays on createTurn / steer.
  */
 import { z } from '@hono/zod-openapi';
 import { UserToolApprovalMessageSchema, UserToolResponseMessageSchema } from '../../core/events/schema';
 
-export const SendTurnEventItemSchema = z
+export const SessionInboundEventItemSchema = z
   .discriminatedUnion('type', [UserToolApprovalMessageSchema, UserToolResponseMessageSchema])
-  .openapi('SendTurnEventItem');
+  .openapi('SessionInboundEventItem');
 
-export type SendTurnEventItem = z.infer<typeof SendTurnEventItemSchema>;
+export type SessionInboundEventItem = z.infer<typeof SessionInboundEventItemSchema>;
