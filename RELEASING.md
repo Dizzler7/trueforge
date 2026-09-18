@@ -201,9 +201,9 @@ open/update one PR on `release-chart/trueforge` (base `main`) or
 `max(Chart.yaml, highest tag on the same line)`: same `X.Y.Z-rc.*` cycle stays
 monotonic; a stable `X.Y.*` hotfix ignores newer majors/RC lines (e.g. `0.2.0`
 → `0.2.1` while `main` is on `0.3.0-rc.*`). Image builds may run per-ref in
-parallel; chart version assign + PR open/merge is globally serialized, and
-auto-merge waits until the `charts/trueforge@*` tag exists before the next run
-starts.
+parallel; chart version assign + PR open/merge is globally serialized with a
+multi-run pending queue (`queue: max`), and auto-merge waits until the
+`charts/trueforge@*` tag exists before the next run starts.
 
 ```bash
 gh workflow run build-and-prepare-chart-release.yml
