@@ -22,6 +22,7 @@ import {
   ToolApprovalRequiredEventSchema,
   ToolResponseEventSchema,
   ToolResponseRequiredEventSchema,
+  UserToolApprovalPolicyEventSchema,
 } from '@truefoundry/trueforge-core/core';
 import { EVENTS_PAGE_LIMIT } from './common';
 
@@ -41,6 +42,7 @@ export const TurnStreamingEventSchema = z
     SandboxCreatedEventSchema,
     ToolApprovalRequiredEventSchema,
     ToolResponseRequiredEventSchema,
+    UserToolApprovalPolicyEventSchema,
     TurnCreatedEventSchema,
     TurnUpdateEventSchema,
     TurnDoneEventSchema,
