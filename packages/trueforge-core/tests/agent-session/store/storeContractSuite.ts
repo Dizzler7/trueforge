@@ -8,7 +8,6 @@ import { decodeSessionEventPageToken } from '../../../src/agent-session/store/Se
 import {
   PreviousTurnRunningError,
   SessionExternalIdConflictError,
-  SessionInboundEventAlreadyExistsError,
   SessionNotFoundError,
   SessionStoreConflictError,
   SessionStoreInvariantError,
@@ -704,9 +703,9 @@ export function runStoreContractSuite(createStore: () => ISessionStore) {
           ],
         }),
       ).rejects.toBeInstanceOf(SessionNotFoundError);
-      await expect(store.listUnconsumedSessionInboundEvents({ session_id: sessionId })).rejects.toBeInstanceOf(
-        SessionNotFoundError,
-      );
+      await expect(
+        store.listUnconsumedSessionInboundEvents({ session_id: sessionId, turn_id: undefined }),
+      ).rejects.toBeInstanceOf(SessionNotFoundError);
       await expect(
         store.listSessionEvents({
           session_id: sessionId,
@@ -2234,7 +2233,7 @@ export function runStoreContractSuite(createStore: () => ISessionStore) {
       await store.createTurn(makeCreateTurnInput({ sessionId, turnId: 'turn-1' }));
 
       const earlier = {
-        event_id: '01AAAAAAAAAAAAAAAAAAAAAAAA',
+        event_id: 'evt-a',
         turn_id: 'turn-1',
         payload: {
           type: 'user.tool_approval' as const,
@@ -2245,7 +2244,7 @@ export function runStoreContractSuite(createStore: () => ISessionStore) {
         created_at: new Date().toISOString(),
       };
       const later = {
-        event_id: '01BBBBBBBBBBBBBBBBBBBBBBBB',
+        event_id: 'evt-b',
         turn_id: 'turn-1',
         payload: {
           type: 'user.tool_approval' as const,
@@ -2284,42 +2283,112 @@ export function runStoreContractSuite(createStore: () => ISessionStore) {
           session_id: sessionId,
           events: [later],
         }),
-      ).rejects.toBeInstanceOf(SessionInboundEventAlreadyExistsError);
+      ).rejects.toMatchObject({
+        name: 'SessionInboundEventAlreadyExistsError',
+        event_id: later.event_id,
+      });
 
-      // Tip-scoped inbox writes are not fenced on running — still allowed after terminal tip
-      // (paused tips will need this; OWN-16 can tighten to paused/running only).
-      await finishTurn(store, 'turn-1');
-      const afterDone = {
-        event_id: '01CCCCCCCCCCCCCCCCCCCCCCCC',
+      // Later id in the batch collides — error must name that id.
+      const fresh = {
+        event_id: 'evt-fresh',
         turn_id: 'turn-1',
         payload: {
-          type: 'user.tool_response' as const,
+          type: 'user.tool_approval' as const,
           thread_id: 'main',
-          tool_call_id: 'tc-3',
-          content: 'client result',
+          tool_call_id: 'tc-fresh',
+          approval: { status: 'allow' as const },
         },
         created_at: new Date().toISOString(),
       };
-      await store.insertSessionInboundEvents({
-        session_id: sessionId,
-        events: [afterDone],
+      await expect(
+        store.insertSessionInboundEvents({
+          session_id: sessionId,
+          events: [fresh, later],
+        }),
+      ).rejects.toMatchObject({
+        name: 'SessionInboundEventAlreadyExistsError',
+        event_id: later.event_id,
       });
-      pending = await store.listUnconsumedSessionInboundEvents({
-        session_id: sessionId,
-        turn_id: 'turn-1',
+      expect(
+        (await store.listUnconsumedSessionInboundEvents({ session_id: sessionId, turn_id: 'turn-1' })).map(
+          e => e.event_id,
+        ),
+      ).toEqual([later.event_id]);
+
+      const dupId = 'evt-dup';
+      await expect(
+        store.insertSessionInboundEvents({
+          session_id: sessionId,
+          events: [
+            {
+              event_id: dupId,
+              turn_id: 'turn-1',
+              payload: {
+                type: 'user.tool_approval' as const,
+                thread_id: 'main',
+                tool_call_id: 'tc-dup',
+                approval: { status: 'allow' as const },
+              },
+              created_at: new Date().toISOString(),
+            },
+            {
+              event_id: dupId,
+              turn_id: 'turn-1',
+              payload: {
+                type: 'user.tool_approval' as const,
+                thread_id: 'main',
+                tool_call_id: 'tc-dup-2',
+                approval: { status: 'deny' as const, reason: 'dup' },
+              },
+              created_at: new Date().toISOString(),
+            },
+          ],
+        }),
+      ).rejects.toMatchObject({
+        name: 'SessionInboundEventAlreadyExistsError',
+        event_id: dupId,
       });
-      expect(pending.map(e => e.event_id)).toEqual([later.event_id, afterDone.event_id]);
+      // Failed batch must not leave a partial row (SQL PK is all-or-nothing).
+      expect(
+        (await store.listUnconsumedSessionInboundEvents({ session_id: sessionId, turn_id: 'turn-1' })).map(
+          e => e.event_id,
+        ),
+      ).toEqual([later.event_id]);
+
+      // Terminal tip rejects inbox writes.
+      await finishTurn(store, 'turn-1');
+      await expect(
+        store.insertSessionInboundEvents({
+          session_id: sessionId,
+          events: [
+            {
+              event_id: 'evt-after-done',
+              turn_id: 'turn-1',
+              payload: {
+                type: 'user.tool_response' as const,
+                thread_id: 'main',
+                tool_call_id: 'tc-3',
+                content: 'client result',
+              },
+              created_at: new Date().toISOString(),
+            },
+          ],
+        }),
+      ).rejects.toBeInstanceOf(TurnNotRunningError);
+      expect(
+        (await store.listUnconsumedSessionInboundEvents({ session_id: sessionId, turn_id: 'turn-1' })).map(
+          e => e.event_id,
+        ),
+      ).toEqual([later.event_id]);
     });
 
-    it('session_inbound_events: list filter turn_id string | null | omitted', async () => {
+    it('session_inbound_events: list filter turn_id string | null | undefined', async () => {
       const store = createStore();
       await seedSession(store);
       await store.createTurn(makeCreateTurnInput({ sessionId, turnId: 'turn-a' }));
-      await finishTurn(store, 'turn-a');
-      await store.createTurn(makeCreateTurnInput({ sessionId, turnId: 'turn-b', previous_turn_id: 'turn-a' }));
 
       const forA = {
-        event_id: '01AAAAAAAAAAAAAAAAAAAAAAAA',
+        event_id: 'evt-a',
         turn_id: 'turn-a',
         payload: {
           type: 'user.tool_approval' as const,
@@ -2329,8 +2398,18 @@ export function runStoreContractSuite(createStore: () => ISessionStore) {
         },
         created_at: new Date().toISOString(),
       };
+      await store.insertSessionInboundEvents({
+        session_id: sessionId,
+        events: [forA],
+      });
+
+      await finishTurn(store, 'turn-a');
+      await store.createTurn(
+        makeCreateTurnInput({ sessionId, turnId: 'turn-b', previousTurnId: 'turn-a', firstTurnId: 'turn-a' }),
+      );
+
       const forB = {
-        event_id: '01BBBBBBBBBBBBBBBBBBBBBBBB',
+        event_id: 'evt-b',
         turn_id: 'turn-b',
         payload: {
           type: 'user.tool_approval' as const,
@@ -2343,7 +2422,7 @@ export function runStoreContractSuite(createStore: () => ISessionStore) {
 
       await store.insertSessionInboundEvents({
         session_id: sessionId,
-        events: [forB, forA],
+        events: [forB],
       });
 
       // string — that turn only
@@ -2375,10 +2454,15 @@ export function runStoreContractSuite(createStore: () => ISessionStore) {
       ).toEqual([]);
 
       // omitted — all unconsumed, ordered by event_id
-      expect((await store.listUnconsumedSessionInboundEvents({ session_id: sessionId })).map(e => e.event_id)).toEqual([
-        forA.event_id,
-        forB.event_id,
-      ]);
+      // undefined — all unconsumed, ordered by event_id
+      expect(
+        (
+          await store.listUnconsumedSessionInboundEvents({
+            session_id: sessionId,
+            turn_id: undefined,
+          })
+        ).map(e => e.event_id),
+      ).toEqual([forA.event_id, forB.event_id]);
     });
 
     it('session_inbound_events cascade away with deleteSession', async () => {
@@ -2402,9 +2486,9 @@ export function runStoreContractSuite(createStore: () => ISessionStore) {
         ],
       });
       await store.deleteSession({ tenant_id: tenant, session_id: sessionId });
-      await expect(store.listUnconsumedSessionInboundEvents({ session_id: sessionId })).rejects.toBeInstanceOf(
-        SessionNotFoundError,
-      );
+      await expect(
+        store.listUnconsumedSessionInboundEvents({ session_id: sessionId, turn_id: undefined }),
+      ).rejects.toBeInstanceOf(SessionNotFoundError);
     });
 
     it('add/remove threads and append/overwrite context', async () => {

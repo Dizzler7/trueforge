@@ -9,6 +9,7 @@ import type {
   AgentSpec,
   CreatedBySubject,
   PersistedTurnEvent,
+  SendTurnEventItem,
   SessionMetadata,
   SessionMetrics,
   SessionSource,
@@ -154,7 +155,7 @@ export interface SessionInboundEventsTable {
   session_id: string;
   event_id: string;
   turn_id: string | null;
-  payload: ColumnType<JsonValue, JsonValue | string, JsonValue | string>;
+  payload: JsonbColumn<SendTurnEventItem>;
   consumed: number;
   created_at: string;
 }

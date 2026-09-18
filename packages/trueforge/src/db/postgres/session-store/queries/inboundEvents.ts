@@ -8,11 +8,13 @@ import {
   SessionInboundEventAlreadyExistsError,
   SessionNotFoundError,
   TurnNotFoundError,
+  TurnNotRunningError,
 } from '@truefoundry/trueforge-core/agent-session/store/SessionStoreErrors';
 import type { Kysely } from 'kysely';
 import { sql } from 'kysely';
+import { firstCollidingEventId, firstDuplicateEventIdInBatch } from '../../../sessionInboundEvents';
 import { isUniqueViolation } from '../../client';
-import { jsonUnknown } from '../../sqlExpressions';
+import { json } from '../../sqlExpressions';
 import type { Database } from '../../types';
 
 async function requireSession(db: Kysely<Database>, sessionId: string): Promise<void> {
@@ -26,16 +28,45 @@ async function requireSession(db: Kysely<Database>, sessionId: string): Promise<
   }
 }
 
-async function requireTurn(db: Kysely<Database>, sessionId: string, turnId: string): Promise<void> {
-  const row = await db
-    .selectFrom('turn')
-    .select('turn_id')
-    .where('session_id', '=', sessionId)
-    .where('turn_id', '=', turnId)
-    .executeTakeFirst();
-  if (!row) {
-    throw new TurnNotFoundError(turnId);
+/** Exists + non-terminal (v1: `running` only; `paused` will be allowed when that status lands). */
+async function requireTurns(db: Kysely<Database>, sessionId: string, turnIds: string[]): Promise<void> {
+  if (turnIds.length === 0) {
+    return;
   }
+  const rows = await db
+    .selectFrom('turn')
+    .select(['turn_id', 'state'])
+    .where('session_id', '=', sessionId)
+    .where('turn_id', 'in', turnIds)
+    .execute();
+  const byId = new Map(rows.map(row => [row.turn_id, row]));
+  for (const turnId of turnIds) {
+    const row = byId.get(turnId);
+    if (!row) {
+      throw new TurnNotFoundError(turnId);
+    }
+    if (row.state.status !== 'running') {
+      throw new TurnNotRunningError(turnId, row.state);
+    }
+  }
+}
+
+async function resolveCollidingEventId(
+  db: Kysely<Database>,
+  sessionId: string,
+  events: InsertSessionInboundEventsInput['events'],
+): Promise<string> {
+  const ids = [...new Set(events.map(e => e.event_id))];
+  if (ids.length === 0) {
+    return '';
+  }
+  const rows = await db
+    .selectFrom('session_inbound_events')
+    .select('event_id')
+    .where('session_id', '=', sessionId)
+    .where('event_id', 'in', ids)
+    .execute();
+  return firstCollidingEventId(events, new Set(rows.map(r => r.event_id)));
 }
 
 export async function insertSessionInboundEvents(
@@ -46,8 +77,11 @@ export async function insertSessionInboundEvents(
     return;
   }
   await requireSession(db, input.session_id);
-  for (const event of input.events) {
-    await requireTurn(db, input.session_id, event.turn_id);
+  await requireTurns(db, input.session_id, [...new Set(input.events.map(event => event.turn_id))]);
+
+  const duplicateInBatch = firstDuplicateEventIdInBatch(input.events);
+  if (duplicateInBatch !== undefined) {
+    throw new SessionInboundEventAlreadyExistsError(input.session_id, duplicateInBatch);
   }
 
   try {
@@ -58,7 +92,7 @@ export async function insertSessionInboundEvents(
           session_id: input.session_id,
           event_id: event.event_id,
           turn_id: event.turn_id,
-          payload: jsonUnknown(event.payload),
+          payload: json(event.payload),
           consumed: false,
           created_at: sql<Date>`${event.created_at}::timestamptz`,
         })),
@@ -66,8 +100,8 @@ export async function insertSessionInboundEvents(
       .execute();
   } catch (error) {
     if (isUniqueViolation(error)) {
-      const first = input.events[0];
-      throw new SessionInboundEventAlreadyExistsError(input.session_id, first?.event_id ?? '', {
+      const eventId = await resolveCollidingEventId(db, input.session_id, input.events);
+      throw new SessionInboundEventAlreadyExistsError(input.session_id, eventId, {
         cause: error,
       });
     }
@@ -98,7 +132,7 @@ export async function listUnconsumedSessionInboundEvents(
   return rows.map(row => ({
     event_id: row.event_id,
     turn_id: row.turn_id,
-    payload: row.payload as SessionInboundEventRecord['payload'],
+    payload: row.payload,
     created_at: new Date(row.created_at).toISOString(),
   }));
 }

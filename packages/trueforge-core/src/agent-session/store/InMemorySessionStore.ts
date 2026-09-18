@@ -507,8 +507,8 @@ export class InMemorySessionStore<
       return;
     }
     this.requireSession(input.session_id);
-    for (const event of input.events) {
-      this.requireTurn(input.session_id, event.turn_id);
+    for (const turnId of new Set(input.events.map(event => event.turn_id))) {
+      this.requireRunningTurn(input.session_id, turnId);
     }
     const sKey = sessionKey(input.session_id);
     let list = this.inboundEvents.get(sKey);
@@ -521,6 +521,7 @@ export class InMemorySessionStore<
       if (existing.has(event.event_id)) {
         throw new SessionInboundEventAlreadyExistsError(input.session_id, event.event_id);
       }
+      existing.add(event.event_id);
     }
     for (const event of input.events) {
       list.push({
@@ -530,7 +531,6 @@ export class InMemorySessionStore<
         created_at: event.created_at,
         consumed: false,
       });
-      existing.add(event.event_id);
     }
   }
 
@@ -602,7 +602,6 @@ export class InMemorySessionStore<
   }
 
   private requireTurn(sessionId: string, turnId: string): TurnRecord<TTurnCustom> {
-    this.requireSession(sessionId);
     const turn = this.turns.get(turnKey({ session_id: sessionId, turn_id: turnId }));
     if (!turn) {
       throw new TurnNotFoundError(turnId);

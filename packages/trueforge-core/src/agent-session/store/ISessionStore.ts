@@ -201,12 +201,13 @@ export interface InsertSessionInboundEventsInput {
 export interface ListUnconsumedSessionInboundEventsInput {
   session_id: string;
   /**
-   * `undefined` (omit) — all unconsumed for the session.
-   * `string` — unconsumed for that turn only.
-   * `null` — unconsumed session-scoped rows only (`turn_id` IS NULL; empty until
-   * policies allow null inserts).
+   * Three-way filter — pass the key explicitly (do not omit):
+   * - `undefined` — all unconsumed for the session
+   * - `string` — unconsumed for that turn only
+   * - `null` — session-scoped rows only (`turn_id` IS NULL; empty until
+   *   policies allow null inserts)
    */
-  turn_id?: string | null;
+  turn_id: string | null | undefined;
 }
 
 export interface MarkSessionInboundEventsConsumedInput {
@@ -407,7 +408,9 @@ export interface ISessionStore<
   /**
    * Durable inbound send-event inbox for the session. v1 requires `turn_id` on
    * every row (tip HITL). Column stays nullable for later session-scoped
-   * policies. Missing session → {@link SessionNotFoundError}; unknown turn →
+   * policies. Tip must be non-terminal (v1: `running`; `paused` when that
+   * status lands) — terminal tip → {@link TurnNotRunningError}. Missing
+   * session → {@link SessionNotFoundError}; unknown turn →
    * {@link TurnNotFoundError}. Duplicate `event_id` →
    * {@link SessionInboundEventAlreadyExistsError}.
    */
