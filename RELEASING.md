@@ -199,6 +199,7 @@ open/update one PR on `release-chart/trueforge` (base `main`) or
 `release-chart/trueforge-<release-v*>` (hotfix base). Chart version baseline is
 `max(Chart.yaml, highest charts/trueforge@* tag)` so hotfix cuts cannot reuse a
 published tag.
+
 ```bash
 gh workflow run build-and-prepare-chart-release.yml
 gh workflow run build-and-prepare-chart-release.yml -f app_version=0.1.0
@@ -219,11 +220,11 @@ commit them to the base branch instead.
 
 [`release-chart.yml`](.github/workflows/release-chart.yml) is one job with three entry points:
 
-| Trigger                                                              | What it does                                                        |
-| -------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Trigger                                                                                            | What it does                                                        |
+| -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
 | Merged PR from `release-chart/trueforge` or `release-chart/trueforge-*` into `main` / `release-v*` | Create `charts/trueforge@<version>` + GitHub Release, then OCI push |
-| Push of tag `charts/trueforge@*`                                     | OCI push only (tag already exists)                                  |
-| `workflow_dispatch` with `tag=`                                      | OCI push for an existing tag (retry)                                |
+| Push of tag `charts/trueforge@*`                                                                   | OCI push only (tag already exists)                                  |
+| `workflow_dispatch` with `tag=`                                                                    | OCI push for an existing tag (retry)                                |
 
 Only `release-chart/trueforge` (main) and `release-chart/trueforge-*` (hotfix)
 heads auto-tag. Ordinary merges never create chart tags.
