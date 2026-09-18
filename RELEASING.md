@@ -163,8 +163,9 @@ git push -u origin release-vX.Y.Z
 
 Then cherry-pick the fix + changeset onto that branch, merge the Version Packages
 PR that targets `release-vX.Y.Z`, and let **Release** publish npm/PyPI and auto
-chart OCI. Pass the resulting chart SemVer to helm-charts
-`release-start` as `trueforge_chart_version` (control-plane pin).
+chart OCI (chart SemVer stays on that line: same `X.Y.Z-rc.*` or stable `X.Y.*`).
+Pass the resulting chart SemVer to helm-charts `release-start` as
+`trueforge_chart_version` (control-plane pin).
 
 Org rules still require human approval on Version Packages PRs into `release-v*`.
 Chart auto-merge needs the limited `trueforge-dev-bot` ruleset bypass
@@ -197,10 +198,12 @@ even when `main` has moved on.
 Always: build/push `{appVersion}-{shortSha}`, patch-bump chart `version`, set `image.tag`,
 open/update one PR on `release-chart/trueforge` (base `main`) or
 `release-chart/trueforge-<release-v*>` (hotfix base). Chart version baseline is
-`max(Chart.yaml, highest charts/trueforge@* tag)` so hotfix cuts cannot reuse a
-published tag. Image builds may run per-ref in parallel; chart version assign +
-PR open/merge is globally serialized, and auto-merge waits until the
-`charts/trueforge@*` tag exists before the next run starts.
+`max(Chart.yaml, highest tag on the same line)`: same `X.Y.Z-rc.*` cycle stays
+monotonic; a stable `X.Y.*` hotfix ignores newer majors/RC lines (e.g. `0.2.0`
+→ `0.2.1` while `main` is on `0.3.0-rc.*`). Image builds may run per-ref in
+parallel; chart version assign + PR open/merge is globally serialized, and
+auto-merge waits until the `charts/trueforge@*` tag exists before the next run
+starts.
 
 ```bash
 gh workflow run build-and-prepare-chart-release.yml
