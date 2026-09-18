@@ -206,6 +206,8 @@ if typing.TYPE_CHECKING:
     from .timezone import Timezone
     from .together_ai_model_provider import TogetherAiModelProvider
     from .token_pagination import TokenPagination
+    from .tool_approval_policy_action import ToolApprovalPolicyAction
+    from .tool_approval_policy_item import ToolApprovalPolicyItem
     from .tool_approval_required_event import ToolApprovalRequiredEvent
     from .tool_call import ToolCall
     from .tool_call_ref import ToolCallRef
@@ -239,6 +241,8 @@ if typing.TYPE_CHECKING:
     from .user_message_content import UserMessageContent
     from .user_message_content_item import UserMessageContentItem
     from .user_tool_approval_event import UserToolApprovalEvent
+    from .user_tool_approval_policy_event import UserToolApprovalPolicyEvent
+    from .user_tool_approval_policy_stream_event import UserToolApprovalPolicyStreamEvent
     from .user_tool_response_event import UserToolResponseEvent
     from .web_search_capability import WebSearchCapability
     from .web_search_config import WebSearchConfig
@@ -444,6 +448,8 @@ _dynamic_imports: typing.Dict[str, str] = {
     "Timezone": ".timezone",
     "TogetherAiModelProvider": ".together_ai_model_provider",
     "TokenPagination": ".token_pagination",
+    "ToolApprovalPolicyAction": ".tool_approval_policy_action",
+    "ToolApprovalPolicyItem": ".tool_approval_policy_item",
     "ToolApprovalRequiredEvent": ".tool_approval_required_event",
     "ToolCall": ".tool_call",
     "ToolCallRef": ".tool_call_ref",
@@ -477,6 +483,8 @@ _dynamic_imports: typing.Dict[str, str] = {
     "UserMessageContent": ".user_message_content",
     "UserMessageContentItem": ".user_message_content_item",
     "UserToolApprovalEvent": ".user_tool_approval_event",
+    "UserToolApprovalPolicyEvent": ".user_tool_approval_policy_event",
+    "UserToolApprovalPolicyStreamEvent": ".user_tool_approval_policy_stream_event",
     "UserToolResponseEvent": ".user_tool_response_event",
     "WebSearchCapability": ".web_search_capability",
     "WebSearchConfig": ".web_search_config",
@@ -706,6 +714,8 @@ __all__ = [
     "Timezone",
     "TogetherAiModelProvider",
     "TokenPagination",
+    "ToolApprovalPolicyAction",
+    "ToolApprovalPolicyItem",
     "ToolApprovalRequiredEvent",
     "ToolCall",
     "ToolCallRef",
@@ -739,6 +749,8 @@ __all__ = [
     "UserMessageContent",
     "UserMessageContentItem",
     "UserToolApprovalEvent",
+    "UserToolApprovalPolicyEvent",
+    "UserToolApprovalPolicyStreamEvent",
     "UserToolResponseEvent",
     "WebSearchCapability",
     "WebSearchConfig",
