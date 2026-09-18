@@ -167,6 +167,8 @@ jobs:
         uses: actions/checkout@v7
         with:
           token: ${{ steps.app-token.outputs.token }}
+          # Full history so charts/trueforge@* tags are available for the version baseline.
+          fetch-depth: 0
 
       - name: Install yq
         run: |
@@ -191,10 +193,25 @@ jobs:
             git fetch --depth=1 origin "$PR_BRANCH"
             PR_VERSION=$(git show FETCH_HEAD:charts/trueforge/Chart.yaml | yq -r '.version')
           fi
-          VERSION=$(bash scripts/resolve-chart-version.sh "$CURRENT" "$APP_VERSION" "$PR_VERSION")
+
+          # Hotfix release-v* branches are often cut from an old SHA whose
+          # Chart.yaml lags tags already published from main. Bumping only from
+          # Chart.yaml would reuse a charts/trueforge@* tag and fail at publish.
+          # Floor on the highest published tag too (e.g. Chart.yaml 0.2.0-rc.5,
+          # tag 0.2.0-rc.10 → bump from 0.2.0-rc.10).
+          HIGHEST_TAG=$(git tag -l 'charts/trueforge@*' | sed 's|^charts/trueforge@||' | sort -V | tail -1 || true)
+          BASELINE=$(printf '%s\n%s\n' "$CURRENT" "$HIGHEST_TAG" | sort -V | tail -1)
+
+          VERSION=$(bash scripts/resolve-chart-version.sh "$BASELINE" "$APP_VERSION" "$PR_VERSION")
+
+          if [[ "$BASELINE" != "$CURRENT" ]]; then
+            echo "Using published tag baseline $BASELINE (Chart.yaml was $CURRENT)"
+          fi
+
           if [[ -n "$PR_VERSION" && "$VERSION" == "$PR_VERSION" ]]; then
             echo "Keeping chart version $PR_VERSION from $PR_BRANCH"
           fi
+
           export VERSION IMAGE_TAG APP_VERSION
           yq -i '.version = strenv(VERSION)' charts/trueforge/Chart.yaml
           yq -i '.image.tag = strenv(IMAGE_TAG)' charts/trueforge/values.yaml
