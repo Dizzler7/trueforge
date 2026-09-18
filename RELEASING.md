@@ -135,7 +135,7 @@ pnpm clean && pnpm build && pnpm standalone:start
 npm publish @truefoundry/trueforge@X.Y.Z
   → call build-and-prepare-chart-release (same commit as publish)
   → build Dockerfile (APP_VERSION=X.Y.Z) → push X.Y.Z-<shortSha>
-  → open/update PR on branch release-chart/trueforge (base = main or release-v*)
+  → open/update chart bot PR (release-chart/trueforge or release-chart/trueforge-release-v*)
   → wait for CI check → squash-merge (merge_chart_pr=true)
   → tag + GH Release + OCI push (release-chart.yml)
 
@@ -195,9 +195,8 @@ even when `main` has moved on.
 | `merge_chart_pr`     | `true` (call) / `false` (dispatch) | Wait for CI `check` and squash-merge the chart bot PR                |
 
 Always: build/push `{appVersion}-{shortSha}`, patch-bump chart `version`, set `image.tag`,
-open/update one PR on `release-chart/trueforge` (base = `main` or the current
-`release-v*` branch).
-
+open/update one PR on `release-chart/trueforge` (base `main`) or
+`release-chart/trueforge-<release-v*>` (hotfix base).
 ```bash
 gh workflow run build-and-prepare-chart-release.yml
 gh workflow run build-and-prepare-chart-release.yml -f app_version=0.1.0
@@ -220,11 +219,12 @@ commit them to the base branch instead.
 
 | Trigger                                                              | What it does                                                        |
 | -------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| Merged PR from `release-chart/trueforge` into `main` or `release-v*` | Create `charts/trueforge@<version>` + GitHub Release, then OCI push |
+| Merged PR from `release-chart/trueforge` or `release-chart/trueforge-*` into `main` / `release-v*` | Create `charts/trueforge@<version>` + GitHub Release, then OCI push |
 | Push of tag `charts/trueforge@*`                                     | OCI push only (tag already exists)                                  |
 | `workflow_dispatch` with `tag=`                                      | OCI push for an existing tag (retry)                                |
 
-Only the `release-chart/trueforge` branch auto-tags. Ordinary merges never create chart tags.
+Only `release-chart/trueforge` (main) and `release-chart/trueforge-*` (hotfix)
+heads auto-tag. Ordinary merges never create chart tags.
 
 Chart-only example:
 

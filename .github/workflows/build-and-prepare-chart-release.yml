@@ -56,6 +56,7 @@ jobs:
       update_app_version: ${{ steps.resolve.outputs.update_app_version }}
       short_sha: ${{ steps.resolve.outputs.short_sha }}
       chart_base: ${{ steps.resolve.outputs.chart_base }}
+      pr_branch: ${{ steps.resolve.outputs.pr_branch }}
       merge_chart_pr: ${{ steps.resolve.outputs.merge_chart_pr }}
     permissions:
       contents: read
@@ -108,16 +109,20 @@ jobs:
           fi
           if [[ "$REF_NAME" == release-v* ]]; then
             CHART_BASE="$REF_NAME"
+            # One bot head per base so main and hotfix runs cannot clobber each other.
+            PR_BRANCH="release-chart/trueforge-${CHART_BASE}"
           else
             CHART_BASE=main
+            PR_BRANCH=release-chart/trueforge
           fi
           echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
           echo "image_tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
           echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
           echo "update_app_version=$UPDATE_OUT" >> "$GITHUB_OUTPUT"
           echo "chart_base=$CHART_BASE" >> "$GITHUB_OUTPUT"
+          echo "pr_branch=$PR_BRANCH" >> "$GITHUB_OUTPUT"
           echo "merge_chart_pr=$MERGE_OUT" >> "$GITHUB_OUTPUT"
-          echo "Resolved APP_VERSION=$APP_VERSION IMAGE_TAG=$IMAGE_TAG update_app_version=$UPDATE_OUT chart_base=$CHART_BASE merge_chart_pr=$MERGE_OUT"
+          echo "Resolved APP_VERSION=$APP_VERSION IMAGE_TAG=$IMAGE_TAG update_app_version=$UPDATE_OUT chart_base=$CHART_BASE pr_branch=$PR_BRANCH merge_chart_pr=$MERGE_OUT"
 
   build:
     name: Build and push server image
@@ -150,7 +155,7 @@ jobs:
       contents: write
       pull-requests: write
     env:
-      PR_BRANCH: release-chart/trueforge
+      PR_BRANCH: ${{ needs.resolve.outputs.pr_branch }}
     steps:
       - id: app-token
         uses: actions/create-github-app-token@v3
@@ -240,7 +245,7 @@ jobs:
             echo "Refusing to merge PR #$PR_NUMBER with unexpected head $HEAD_REF" >&2
             exit 1
           fi
-          # Chart PRs typically register
+          # Checks usually appear within ~10s of PR open.
           sleep 20
           for _ in $(seq 1 30); do
             gh pr checks "$PR_NUMBER" >/dev/null 2>&1 && break
