@@ -207,6 +207,8 @@ export interface SkillTable {
  */
 export interface SandboxProviderTable {
   tenant_id: string;
+  /** Identity; currently always equal to `manifest.type`. */
+  name: string;
   /** StoredSandboxProviderManifest document; replaced whole on every upsert */
   manifest: JsonbColumn<StoredSandboxProviderManifest>;
   /** Last persisted build status of the release sandbox image. */
