@@ -195,7 +195,6 @@ export function makeDoneTurnState(): TerminalTurnState {
   return {
     status: 'done',
     output: null,
-    required_actions: [],
     completed_at: new Date().toISOString(),
   };
 }
