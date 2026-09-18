@@ -30,25 +30,18 @@ async function requireSession(db: Kysely<Database>, sessionId: string): Promise<
 }
 
 /** Exists + non-terminal (v1: `running` only; `paused` will be allowed when that status lands). */
-async function requireTurns(db: Kysely<Database>, sessionId: string, turnIds: string[]): Promise<void> {
-  if (turnIds.length === 0) {
-    return;
-  }
-  const rows = await db
+async function requireTurn(db: Kysely<Database>, sessionId: string, turnId: string): Promise<void> {
+  const row = await db
     .selectFrom('turn')
     .select(['turn_id', jsonText<TurnState>(sql.ref('state')).as('state')])
     .where('session_id', '=', sessionId)
-    .where('turn_id', 'in', turnIds)
-    .execute();
-  const byId = new Map(rows.map(row => [row.turn_id, row]));
-  for (const turnId of turnIds) {
-    const row = byId.get(turnId);
-    if (!row) {
-      throw new TurnNotFoundError(turnId);
-    }
-    if (row.state.status !== 'running') {
-      throw new TurnNotRunningError(turnId, row.state);
-    }
+    .where('turn_id', '=', turnId)
+    .executeTakeFirst();
+  if (!row) {
+    throw new TurnNotFoundError(turnId);
+  }
+  if (row.state.status !== 'running') {
+    throw new TurnNotRunningError(turnId, row.state);
   }
 }
 
@@ -78,7 +71,7 @@ export async function insertSessionInboundEvents(
     return;
   }
   await requireSession(db, input.session_id);
-  await requireTurns(db, input.session_id, [...new Set(input.events.map(event => event.turn_id))]);
+  await requireTurn(db, input.session_id, input.turn_id);
 
   const duplicateInBatch = firstDuplicateEventIdInBatch(input.events);
   if (duplicateInBatch !== undefined) {
@@ -92,7 +85,7 @@ export async function insertSessionInboundEvents(
         input.events.map(event => ({
           session_id: input.session_id,
           event_id: event.event_id,
-          turn_id: event.turn_id,
+          turn_id: input.turn_id,
           payload: jsonbBind(event.payload),
           consumed: 0,
           created_at: event.created_at,

@@ -185,13 +185,15 @@ export interface SessionInboundEventRecord {
 export interface InsertSessionInboundEventsInput {
   session_id: string;
   /**
+   * Tip that receives this batch (v1 required). One send = one tip; stamp every
+   * row with this id. Relax to optional/null when session-scoped policies land.
+   */
+  turn_id: string;
+  /**
    * Caller mints `event_id` (monotonic ULID) — same contract as session_event.
-   * Empty array is a no-op. `turn_id` is required for v1 tip HITL (HTTP body
-   * field on session send-event); relax to optional/null when session-scoped
-   * policies land.
+   * Empty array is a no-op.
    */
   events: Array<{
-    turn_id: string;
     event_id: string;
     payload: SendTurnEventItem;
     created_at: string;
@@ -406,11 +408,10 @@ export interface ISessionStore<
   appendToEvents(input: AppendToEventsInput): Promise<void>;
 
   /**
-   * Durable inbound send-event inbox for the session. v1 requires `turn_id` on
-   * every row (tip HITL). Column stays nullable for later session-scoped
-   * policies. Tip must be non-terminal (v1: `running`; `paused` when that
-   * status lands) — terminal tip → {@link TurnNotRunningError}. Missing
-   * session → {@link SessionNotFoundError}; unknown turn →
+   * Durable inbound send-event inbox for the session. Column stays nullable for later
+   * session-scoped policies. Tip must be non-terminal (v1: `running`; `paused`
+   * when that status lands) — terminal tip → {@link TurnNotRunningError}.
+   * Missing session → {@link SessionNotFoundError}; unknown turn →
    * {@link TurnNotFoundError}. Duplicate `event_id` →
    * {@link SessionInboundEventAlreadyExistsError}.
    */

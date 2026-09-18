@@ -507,9 +507,7 @@ export class InMemorySessionStore<
       return;
     }
     this.requireSession(input.session_id);
-    for (const turnId of new Set(input.events.map(event => event.turn_id))) {
-      this.requireRunningTurn(input.session_id, turnId);
-    }
+    this.requireRunningTurn(input.session_id, input.turn_id);
     const sKey = sessionKey(input.session_id);
     let list = this.inboundEvents.get(sKey);
     if (!list) {
@@ -526,7 +524,7 @@ export class InMemorySessionStore<
     for (const event of input.events) {
       list.push({
         event_id: event.event_id,
-        turn_id: event.turn_id,
+        turn_id: input.turn_id,
         payload: deepCopy(event.payload),
         created_at: event.created_at,
         consumed: false,

@@ -688,10 +688,10 @@ export function runStoreContractSuite(createStore: () => ISessionStore) {
       await expect(
         store.insertSessionInboundEvents({
           session_id: sessionId,
+          turn_id: 'turn-1',
           events: [
             {
               event_id: newEventId(),
-              turn_id: 'turn-1',
               payload: {
                 type: 'user.tool_approval',
                 thread_id: 'main',
@@ -2234,7 +2234,6 @@ export function runStoreContractSuite(createStore: () => ISessionStore) {
 
       const earlier = {
         event_id: 'evt-a',
-        turn_id: 'turn-1',
         payload: {
           type: 'user.tool_approval' as const,
           thread_id: 'main',
@@ -2245,7 +2244,6 @@ export function runStoreContractSuite(createStore: () => ISessionStore) {
       };
       const later = {
         event_id: 'evt-b',
-        turn_id: 'turn-1',
         payload: {
           type: 'user.tool_approval' as const,
           thread_id: 'main',
@@ -2257,6 +2255,7 @@ export function runStoreContractSuite(createStore: () => ISessionStore) {
 
       await store.insertSessionInboundEvents({
         session_id: sessionId,
+        turn_id: 'turn-1',
         events: [later, earlier],
       });
 
@@ -2281,6 +2280,7 @@ export function runStoreContractSuite(createStore: () => ISessionStore) {
       await expect(
         store.insertSessionInboundEvents({
           session_id: sessionId,
+          turn_id: 'turn-1',
           events: [later],
         }),
       ).rejects.toMatchObject({
@@ -2291,7 +2291,6 @@ export function runStoreContractSuite(createStore: () => ISessionStore) {
       // Later id in the batch collides — error must name that id.
       const fresh = {
         event_id: 'evt-fresh',
-        turn_id: 'turn-1',
         payload: {
           type: 'user.tool_approval' as const,
           thread_id: 'main',
@@ -2303,6 +2302,7 @@ export function runStoreContractSuite(createStore: () => ISessionStore) {
       await expect(
         store.insertSessionInboundEvents({
           session_id: sessionId,
+          turn_id: 'turn-1',
           events: [fresh, later],
         }),
       ).rejects.toMatchObject({
@@ -2319,10 +2319,10 @@ export function runStoreContractSuite(createStore: () => ISessionStore) {
       await expect(
         store.insertSessionInboundEvents({
           session_id: sessionId,
+          turn_id: 'turn-1',
           events: [
             {
               event_id: dupId,
-              turn_id: 'turn-1',
               payload: {
                 type: 'user.tool_approval' as const,
                 thread_id: 'main',
@@ -2333,7 +2333,6 @@ export function runStoreContractSuite(createStore: () => ISessionStore) {
             },
             {
               event_id: dupId,
-              turn_id: 'turn-1',
               payload: {
                 type: 'user.tool_approval' as const,
                 thread_id: 'main',
@@ -2360,10 +2359,10 @@ export function runStoreContractSuite(createStore: () => ISessionStore) {
       await expect(
         store.insertSessionInboundEvents({
           session_id: sessionId,
+          turn_id: 'turn-1',
           events: [
             {
               event_id: 'evt-after-done',
-              turn_id: 'turn-1',
               payload: {
                 type: 'user.tool_response' as const,
                 thread_id: 'main',
@@ -2389,7 +2388,6 @@ export function runStoreContractSuite(createStore: () => ISessionStore) {
 
       const forA = {
         event_id: 'evt-a',
-        turn_id: 'turn-a',
         payload: {
           type: 'user.tool_approval' as const,
           thread_id: 'main',
@@ -2400,6 +2398,7 @@ export function runStoreContractSuite(createStore: () => ISessionStore) {
       };
       await store.insertSessionInboundEvents({
         session_id: sessionId,
+        turn_id: 'turn-a',
         events: [forA],
       });
 
@@ -2410,7 +2409,6 @@ export function runStoreContractSuite(createStore: () => ISessionStore) {
 
       const forB = {
         event_id: 'evt-b',
-        turn_id: 'turn-b',
         payload: {
           type: 'user.tool_approval' as const,
           thread_id: 'main',
@@ -2422,6 +2420,7 @@ export function runStoreContractSuite(createStore: () => ISessionStore) {
 
       await store.insertSessionInboundEvents({
         session_id: sessionId,
+        turn_id: 'turn-b',
         events: [forB],
       });
 
@@ -2471,10 +2470,10 @@ export function runStoreContractSuite(createStore: () => ISessionStore) {
       await store.createTurn(makeCreateTurnInput({ sessionId, turnId: 'turn-1' }));
       await store.insertSessionInboundEvents({
         session_id: sessionId,
+        turn_id: 'turn-1',
         events: [
           {
             event_id: newEventId(),
-            turn_id: 'turn-1',
             payload: {
               type: 'user.tool_approval',
               thread_id: 'main',
