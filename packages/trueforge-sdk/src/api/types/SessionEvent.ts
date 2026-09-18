@@ -14,5 +14,4 @@ export type SessionEvent =
     | TrueForge.ToolResponseRequiredEvent
     | TrueForge.TurnCreatedEvent
     | TrueForge.TurnDoneEvent
-    | TrueForge.TurnUpdateEvent
-    | TrueForge.UserToolApprovalPolicyStreamEvent;
+    | TrueForge.TurnUpdateEvent;

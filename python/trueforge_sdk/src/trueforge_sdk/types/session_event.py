@@ -14,7 +14,6 @@ from .tool_response_required_event import ToolResponseRequiredEvent
 from .turn_created_event import TurnCreatedEvent
 from .turn_done_event import TurnDoneEvent
 from .turn_update_event import TurnUpdateEvent
-from .user_tool_approval_policy_stream_event import UserToolApprovalPolicyStreamEvent
 
 SessionEvent = typing.Union[
     McpAuthRequiredEvent,
@@ -29,5 +28,4 @@ SessionEvent = typing.Union[
     TurnCreatedEvent,
     TurnDoneEvent,
     TurnUpdateEvent,
-    UserToolApprovalPolicyStreamEvent,
 ]

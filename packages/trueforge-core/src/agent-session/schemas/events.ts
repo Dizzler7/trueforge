@@ -18,7 +18,6 @@ import {
   ToolApprovalRequiredEventSchema,
   ToolResponseEventSchema,
   ToolResponseRequiredEventSchema,
-  UserToolApprovalPolicyEventSchema,
 } from '../../core/events/schema';
 import {
   TurnInputItemSchema,
@@ -112,7 +111,6 @@ export const SessionEventSchema = z
     SandboxCreatedEventSchema,
     ToolApprovalRequiredEventSchema,
     ToolResponseRequiredEventSchema,
-    UserToolApprovalPolicyEventSchema,
   ])
   .openapi('SessionEvent');
 
