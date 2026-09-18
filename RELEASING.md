@@ -198,7 +198,9 @@ Always: build/push `{appVersion}-{shortSha}`, patch-bump chart `version`, set `i
 open/update one PR on `release-chart/trueforge` (base `main`) or
 `release-chart/trueforge-<release-v*>` (hotfix base). Chart version baseline is
 `max(Chart.yaml, highest charts/trueforge@* tag)` so hotfix cuts cannot reuse a
-published tag.
+published tag. Image builds may run per-ref in parallel; chart version assign +
+PR open/merge is globally serialized, and auto-merge waits until the
+`charts/trueforge@*` tag exists before the next run starts.
 
 ```bash
 gh workflow run build-and-prepare-chart-release.yml

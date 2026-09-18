@@ -151,6 +151,12 @@ jobs:
     name: Open chart release PR
     needs: [resolve, build]
     runs-on: ubuntu-latest
+    # Chart SemVer is global (charts/trueforge@*). Per-ref workflow concurrency
+    # allows main and release-v* to assign the same next version; serialize this
+    # job so only one run bumps/opens/merges at a time.
+    concurrency:
+      group: release-chart-version-and-pr
+      cancel-in-progress: false
     permissions:
       contents: write
       pull-requests: write
@@ -199,6 +205,7 @@ jobs:
           # Chart.yaml would reuse a charts/trueforge@* tag and fail at publish.
           # Floor on the highest published tag too (e.g. Chart.yaml 0.2.0-rc.5,
           # tag 0.2.0-rc.10 → bump from 0.2.0-rc.10).
+          git fetch --tags --force origin
           HIGHEST_TAG=$(git tag -l 'charts/trueforge@*' | sed 's|^charts/trueforge@||' | sort -V | tail -1 || true)
           BASELINE=$(printf '%s\n%s\n' "$CURRENT" "$HIGHEST_TAG" | sort -V | tail -1)
 
@@ -255,6 +262,7 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PR_NUMBER: ${{ steps.open-pr.outputs.pull-request-number }}
           PR_BRANCH: ${{ env.PR_BRANCH }}
+          CHART_VERSION: ${{ steps.chart.outputs.version }}
         run: |
           set -euo pipefail
           HEAD_REF=$(gh pr view "$PR_NUMBER" --json headRefName --jq .headRefName)
@@ -273,3 +281,15 @@ jobs:
             echo "Merge blocked. Add limited trueforge-dev-bot ruleset bypass (pull_request mode; keep required checks on a no-bypass ruleset)." >&2
             exit 1
           fi
+          # Hold job concurrency until release-chart.yml creates the tag, so the
+          # next queued run's baseline includes this SemVer.
+          TAG="charts/trueforge@${CHART_VERSION}"
+          for _ in $(seq 1 60); do
+            if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+              echo "Tag ${TAG} is visible on origin"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Timed out waiting for ${TAG} after merge" >&2
+          exit 1
