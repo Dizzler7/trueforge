@@ -746,7 +746,7 @@ export async function listTurns(db: Kysely<Database>, input: ListTurnsInput): Pr
 
 /**
  * updateTurnState — conditional on state->>'status'='running'.
- * 0 rows → SELECT by PK → missing NotFound, present Conflict (first terminal write wins).
+ * 0 rows → SELECT by PK → missing NotFound, present Conflict (first non-running write wins).
  */
 export async function updateTurnState(db: Kysely<Database>, input: UpdateTurnStateInput): Promise<void> {
   await db.transaction().execute(async trx => {
@@ -777,11 +777,13 @@ export async function updateTurnState(db: Kysely<Database>, input: UpdateTurnSta
       throw new TurnNotRunningError(input.turn_id, terminalTurnState(existing.state, input.turn_id));
     }
 
-    await addSessionCostAndDuration(trx, {
-      session_id: input.session_id,
-      turn_created_at: result.created_at,
-      turn_state: input.state,
-    });
+    if (input.state.status !== 'paused') {
+      await addSessionCostAndDuration(trx, {
+        session_id: input.session_id,
+        turn_created_at: result.created_at,
+        turn_state: input.state,
+      });
+    }
 
     await trx
       .insertInto('session_event')

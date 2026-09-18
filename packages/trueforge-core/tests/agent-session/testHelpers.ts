@@ -3,7 +3,7 @@ import type { ITurnResourceResolver } from '../../src/agent-session/ITurnResourc
 import { MAIN_THREAD_ID, type TurnRecord } from '../../src/agent-session/models/TurnRecord';
 import { AgentSpecSchema, type AgentSpec } from '../../src/agent-session/schemas/agentSpec';
 import { EventType } from '../../src/agent-session/schemas/events';
-import { CancellationReason, type TerminalTurnState } from '../../src/agent-session/schemas/turn';
+import { CancellationReason, type TerminalTurnState, type TurnStatePaused } from '../../src/agent-session/schemas/turn';
 import type { CreateTurnInput, NewThreadInit, TurnContextAppend } from '../../src/agent-session/store/ISessionStore';
 import { TurnResourceResolver } from '../../src/agent-session/TurnResourceResolver';
 import type { AgentCapability } from '../../src/core/capabilities/AgentCapability';
@@ -151,6 +151,25 @@ export function makeTurnDoneEvent(state: TerminalTurnState) {
     created_at: new Date().toISOString(),
     state,
     thread_id: null,
+  };
+}
+
+export function makePausedTurnState(
+  action_required_on_events: { id: string }[] = [{ id: newEventId() }],
+): TurnStatePaused {
+  return {
+    status: 'paused',
+    action_required_on_events,
+  };
+}
+
+export function makeTurnUpdateEvent(state: TurnStatePaused) {
+  return {
+    type: EventType.TURN_UPDATE,
+    id: newEventId(),
+    created_at: new Date().toISOString(),
+    thread_id: null,
+    state,
   };
 }
 
