@@ -146,6 +146,20 @@ export interface SessionEventTable {
 }
 
 /**
+ * Session inbound send-event inbox (tip HITL + future session-scoped payloads).
+ * PRIMARY KEY (session_id, event_id). `turn_id` nullable.
+ * `consumed` is INTEGER 0/1 (STRICT has no boolean).
+ */
+export interface SessionInboundEventsTable {
+  session_id: string;
+  event_id: string;
+  turn_id: string | null;
+  payload: ColumnType<JsonValue, JsonValue | string, JsonValue | string>;
+  consumed: number;
+  created_at: string;
+}
+
+/**
  * Pure immutable content; no state → no checkpoint field.
  * PRIMARY KEY (append_id) AUTOINCREMENT
  */
@@ -338,6 +352,7 @@ export interface Database {
   turn_thread: TurnThreadTable;
   turn_thread_context: TurnThreadContextTable;
   session_event: SessionEventTable;
+  session_inbound_events: SessionInboundEventsTable;
   thread_context_log: ThreadContextLogTable;
   thread_capability_state: ThreadCapabilityStateTable;
   model_provider: ModelProviderTable;

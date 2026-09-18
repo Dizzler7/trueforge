@@ -11,6 +11,7 @@ import type { SessionRecord } from '../models/SessionRecord';
 import type { TurnRecord } from '../models/TurnRecord';
 import type { PersistedTurnEvent, SessionEventItem } from '../schemas/events';
 import type { TokenPagination } from '../schemas/pagination';
+import type { SendTurnEventItem } from '../schemas/sendEvent';
 import type { SessionMetadata } from '../schemas/session';
 import type { CancellationReason, TerminalTurnState } from '../schemas/turn';
 
@@ -168,6 +169,49 @@ export interface AppendToEventsInput {
   session_id: string;
   turn_id: string;
   events: PersistedTurnEvent[];
+}
+
+/** One durable inbound send-event row (tip HITL and/or session-scoped). */
+export interface SessionInboundEventRecord {
+  event_id: string;
+  /** Tip id when tip-scoped; null for session-only (e.g. future policies). */
+  turn_id: string | null;
+  /** Validated {@link SendTurnEventItem} body (widens when policy lands). */
+  payload: SendTurnEventItem;
+  /** ISO-8601; copied from insert input. Ordering uses `event_id`. */
+  created_at: string;
+}
+
+export interface InsertSessionInboundEventsInput {
+  session_id: string;
+  /**
+   * Caller mints `event_id` (monotonic ULID) — same contract as session_event.
+   * Empty array is a no-op. `turn_id` is required for v1 tip HITL (HTTP body
+   * field on session send-event); relax to optional/null when session-scoped
+   * policies land.
+   */
+  events: Array<{
+    turn_id: string;
+    event_id: string;
+    payload: SendTurnEventItem;
+    created_at: string;
+  }>;
+}
+
+export interface ListUnconsumedSessionInboundEventsInput {
+  session_id: string;
+  /**
+   * `undefined` (omit) — all unconsumed for the session.
+   * `string` — unconsumed for that turn only.
+   * `null` — unconsumed session-scoped rows only (`turn_id` IS NULL; empty until
+   * policies allow null inserts).
+   */
+  turn_id?: string | null;
+}
+
+export interface MarkSessionInboundEventsConsumedInput {
+  session_id: string;
+  event_ids: string[];
 }
 
 export interface AddThreadsInput {
@@ -359,6 +403,30 @@ export interface ISessionStore<
    * key. `created_at` records event creation time but is not the order key.
    */
   appendToEvents(input: AppendToEventsInput): Promise<void>;
+
+  /**
+   * Durable inbound send-event inbox for the session. v1 requires `turn_id` on
+   * every row (tip HITL). Column stays nullable for later session-scoped
+   * policies. Missing session → {@link SessionNotFoundError}; unknown turn →
+   * {@link TurnNotFoundError}. Duplicate `event_id` →
+   * {@link SessionInboundEventAlreadyExistsError}.
+   */
+  insertSessionInboundEvents(input: InsertSessionInboundEventsInput): Promise<void>;
+
+  /**
+   * Unconsumed inbox rows, ordered by monotonic `event_id` ascending.
+   * See {@link ListUnconsumedSessionInboundEventsInput.turn_id} for filtering.
+   * Missing session → {@link SessionNotFoundError}.
+   */
+  listUnconsumedSessionInboundEvents(
+    input: ListUnconsumedSessionInboundEventsInput,
+  ): Promise<SessionInboundEventRecord[]>;
+
+  /**
+   * Marks inbox rows consumed. Already-consumed or unknown ids are ignored.
+   * Empty `event_ids` is a no-op. Missing session → {@link SessionNotFoundError}.
+   */
+  markSessionInboundEventsConsumed(input: MarkSessionInboundEventsConsumedInput): Promise<void>;
 
   /** Adds thread snapshots to the turn (sub-agent spawns). */
   addThreads(input: AddThreadsInput): Promise<void>;
