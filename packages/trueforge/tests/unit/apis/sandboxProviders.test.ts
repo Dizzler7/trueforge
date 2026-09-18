@@ -50,7 +50,7 @@ const expectedStatus = {
 
 /** Wire GET/PUT response: identity name (= manifest.type), redacted manifest, build status. */
 function wireResponse(manifest: Record<string, unknown>) {
-  return { name: manifest.type, manifest, ...expectedStatus };
+  return { name: manifest['type'], manifest, ...expectedStatus };
 }
 
 const putBodyWire = wireResponse({
