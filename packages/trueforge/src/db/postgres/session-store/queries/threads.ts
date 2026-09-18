@@ -334,7 +334,7 @@ export async function overwriteThreadContext(db: Kysely<Database>, input: Overwr
 
 /**
  * patchMCPServers — one-shot conditional UPDATE on the fence row itself
- * (`state->>'status' = 'running'`). No separate FOR SHARE fence CTE.
+ * (running + matching active_executor_id). No separate FOR SHARE fence CTE.
  * Subscript LHS + expression RHS for shallow merge by server id.
  */
 export async function patchMCPServers(db: Kysely<Database>, input: PatchMCPServersInput): Promise<void> {
@@ -361,6 +361,7 @@ export async function patchMCPServers(db: Kysely<Database>, input: PatchMCPServe
     .where('session_id', '=', keys.session_id)
     .where('turn_id', '=', keys.turn_id)
     .where(sql<boolean>`state->>'status' = 'running'`)
+    .where('active_executor_id', '=', keys.expected_active_executor_id)
     .executeTakeFirst();
 
   if (Number(result.numUpdatedRows) === 0) {
@@ -370,7 +371,7 @@ export async function patchMCPServers(db: Kysely<Database>, input: PatchMCPServe
 
 /**
  * patchSandboxInfo — one-shot conditional UPDATE on the fence row itself
- * (`state->>'status' = 'running'`). LWW replace via subscript assignment.
+ * (running + matching active_executor_id). LWW replace via subscript assignment.
  */
 export async function patchSandboxInfo(db: Kysely<Database>, input: PatchSandboxInfoInput): Promise<void> {
   const keys: TurnKeys = {
@@ -386,6 +387,7 @@ export async function patchSandboxInfo(db: Kysely<Database>, input: PatchSandbox
     .where('session_id', '=', keys.session_id)
     .where('turn_id', '=', keys.turn_id)
     .where(sql<boolean>`state->>'status' = 'running'`)
+    .where('active_executor_id', '=', keys.expected_active_executor_id)
     .executeTakeFirst();
 
   if (Number(result.numUpdatedRows) === 0) {

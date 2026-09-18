@@ -182,7 +182,7 @@ export function turnProgressFence(db: TurnFenceDb, keys: TurnKeys) {
 }
 
 /** Classify a 0-row progress-fenced write: missing, wrong owner, or not running. */
-export async function classifyTurnProgressFenceFailure(db: Kysely<Database>, keys: TurnKeys): Promise<never> {
+export async function classifyTurnProgressFenceFailure(db: DbOrTrx, keys: TurnKeys): Promise<never> {
   const row = await db
     .selectFrom('turn')
     .select(['state', 'active_executor_id'])
@@ -207,7 +207,7 @@ export async function classifyTurnProgressFenceFailure(db: Kysely<Database>, key
  * Classify a 0-row progress-fenced turn_thread UPDATE: missing/terminal/wrong owner vs thread missing.
  */
 export async function classifyTurnThreadProgressFailure(
-  db: Kysely<Database>,
+  db: DbOrTrx,
   keys: TurnKeys,
   thread_id: string,
 ): Promise<never> {
@@ -769,8 +769,8 @@ export async function listTurns(db: Kysely<Database>, input: ListTurnsInput): Pr
 }
 
 /**
- * updateTurnState — conditional on state->>'status'='running'.
- * 0 rows → SELECT by PK → missing NotFound, present Conflict (first terminal write wins).
+ * updateTurnState — conditional on running + matching active_executor_id.
+ * 0 rows → classify: missing / wrong owner / already terminal (first terminal write wins).
  */
 export async function updateTurnState(db: Kysely<Database>, input: UpdateTurnStateInput): Promise<void> {
   await db.transaction().execute(async trx => {
@@ -783,22 +783,17 @@ export async function updateTurnState(db: Kysely<Database>, input: UpdateTurnSta
       .where('session_id', '=', input.session_id)
       .where('turn_id', '=', input.turn_id)
       .where(sql<boolean>`state->>'status' = 'running'`)
+      .where('active_executor_id', '=', input.expected_active_executor_id)
       .returning(['created_at'])
       .executeTakeFirst();
 
-    // No RETURNING row: UPDATE matched 0 running turns.
+    // No RETURNING row: UPDATE matched 0 owned running turns.
     if (result === undefined) {
-      const existing = await trx
-        .selectFrom('turn')
-        .select('state')
-        .where('session_id', '=', input.session_id)
-        .where('turn_id', '=', input.turn_id)
-        .executeTakeFirst();
-
-      if (!existing) {
-        throw new TurnNotFoundError(input.turn_id);
-      }
-      throw new TurnNotRunningError(input.turn_id, terminalTurnState(existing.state, input.turn_id));
+      return await classifyTurnProgressFenceFailure(trx, {
+        session_id: input.session_id,
+        turn_id: input.turn_id,
+        expected_active_executor_id: input.expected_active_executor_id,
+      });
     }
 
     await addSessionCostAndDuration(trx, {

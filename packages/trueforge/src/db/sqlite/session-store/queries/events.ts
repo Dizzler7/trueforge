@@ -42,6 +42,7 @@ export async function appendToEvents(db: Kysely<Database>, input: AppendToEvents
       .where('session_id', '=', keys.session_id)
       .where('turn_id', '=', keys.turn_id)
       .where(sql<boolean>`state->>'status' = 'running'`)
+      .where('active_executor_id', '=', keys.expected_active_executor_id)
       .executeTakeFirst();
 
     if (!fenceRow) {

@@ -14,13 +14,14 @@ export async function patchThreadCapabilityState(
   input: PatchThreadCapabilityStateInput,
 ): Promise<void> {
   await db.transaction().execute(async trx => {
-    // Fence inside IMMEDIATE transaction: verify turn is still running.
+    // Fence inside IMMEDIATE transaction: verify turn is still running and owned.
     const fenceRow = await trx
       .selectFrom('turn')
       .select(sql`1`.as('one'))
       .where('session_id', '=', input.session_id)
       .where('turn_id', '=', input.turn_id)
       .where(sql<boolean>`state->>'status' = 'running'`)
+      .where('active_executor_id', '=', input.expected_active_executor_id)
       .executeTakeFirst();
 
     if (!fenceRow) {

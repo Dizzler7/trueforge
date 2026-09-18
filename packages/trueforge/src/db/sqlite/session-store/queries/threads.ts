@@ -363,7 +363,7 @@ export async function overwriteThreadContext(db: Kysely<Database>, input: Overwr
 }
 
 /**
- * patchMCPServers — conditional UPDATE fenced on state->>'status'='running'.
+ * patchMCPServers — conditional UPDATE fenced on running + matching active_executor_id.
  * Shallow merge by server id (Postgres `||`): patched ids replace wholesale.
  */
 export async function patchMCPServers(db: Kysely<Database>, input: PatchMCPServersInput): Promise<void> {
@@ -407,6 +407,7 @@ export async function patchMCPServers(db: Kysely<Database>, input: PatchMCPServe
     .where('session_id', '=', keys.session_id)
     .where('turn_id', '=', keys.turn_id)
     .where(sql<boolean>`state->>'status' = 'running'`)
+    .where('active_executor_id', '=', keys.expected_active_executor_id)
     .executeTakeFirst();
 
   if (Number(result.numUpdatedRows) === 0) {
@@ -433,6 +434,7 @@ export async function patchSandboxInfo(db: Kysely<Database>, input: PatchSandbox
     .where('session_id', '=', keys.session_id)
     .where('turn_id', '=', keys.turn_id)
     .where(sql<boolean>`state->>'status' = 'running'`)
+    .where('active_executor_id', '=', keys.expected_active_executor_id)
     .executeTakeFirst();
 
   if (Number(result.numUpdatedRows) === 0) {
