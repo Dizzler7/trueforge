@@ -89,7 +89,7 @@ export function ComposerAttachmentsContainer() {
 
 export function MessageAttachmentsContainer() {
   return (
-    <div className="aui-user-message-attachments-end col-span-full col-start-1 row-start-1 flex w-full flex-row justify-end gap-2">
+    <div className="aui-user-message-attachments-end col-span-full col-start-1 row-start-1 flex w-full flex-row flex-wrap justify-end gap-2">
       <MessagePrimitive.Attachments>{() => <MessageAttachmentItem />}</MessagePrimitive.Attachments>
     </div>
   );

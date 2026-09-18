@@ -80,6 +80,7 @@ describe('UserMessageContainer', () => {
     const chip = screen.getByText('report.pdf').closest("[data-slot='aui_attachment-chip']");
     expect(chip).toHaveStyle({ maxWidth: '12rem' });
     expect(screen.getByText('1.00 KB')).toBeInTheDocument();
+    expect(document.querySelector('.aui-user-message-attachments-end')).toHaveClass('flex-wrap');
   });
 
   it('shows the action bar when the thread is idle', () => {
