@@ -3,8 +3,8 @@ import { sql, type Kysely } from 'kysely';
 /**
  * Persist sandbox provider identity `name` (always equal to `manifest.type` for now).
  * Rebuilds the table so `name` is NOT NULL without a leftover DEFAULT (SQLite cannot
- * drop a column default in place). Also drops the temporary `status` DEFAULT from
- * the earlier status migration.
+ * drop a column default in place), with UNIQUE (tenant_id, name). Also drops the
+ * temporary `status` DEFAULT from the earlier status migration.
  */
 export async function up(db: Kysely<unknown>): Promise<void> {
   await db.transaction().execute(async trx => {
@@ -18,7 +18,8 @@ export async function up(db: Kysely<unknown>): Promise<void> {
         build_metadata BLOB,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        PRIMARY KEY (tenant_id)
+        PRIMARY KEY (tenant_id),
+        UNIQUE (tenant_id, name)
       ) STRICT
     `.execute(trx);
 
