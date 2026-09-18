@@ -3,7 +3,7 @@ import { sql, type Kysely } from 'kysely';
 import { json } from '../../sqlExpressions';
 import type { Database } from '../../types';
 import { values } from '../sqlExpressions';
-import { classifyTurnFenceWriteFailure, turnRunningFence } from './turns';
+import { classifyTurnProgressFenceFailure, turnProgressFence } from './turns';
 
 /**
  * patchThreadCapabilityState — single-statement fenced upsert on the PER-TURN PK;
@@ -20,7 +20,7 @@ export async function patchThreadCapabilityState(
   };
 
   const rows = await db
-    .with('turn_fence', qb => turnRunningFence(qb, keys))
+    .with('turn_fence', qb => turnProgressFence(qb, keys))
     .insertInto('thread_capability_state')
     .columns(['session_id', 'turn_id', 'thread_id', 'key', 'state', 'updated_at'])
     .expression(eb =>
@@ -46,6 +46,6 @@ export async function patchThreadCapabilityState(
     .execute();
 
   if (rows.length === 0) {
-    await classifyTurnFenceWriteFailure(db, keys);
+    await classifyTurnProgressFenceFailure(db, keys);
   }
 }

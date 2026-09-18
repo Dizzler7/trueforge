@@ -21,14 +21,14 @@ import {
 import { sql, type Kysely } from 'kysely';
 import { jsonbBind, jsonText } from '../../sqlExpressions';
 import type { Database } from '../../types';
-import { classifyTurnFenceWriteFailure, type TurnWriteKeys } from './turns';
+import { classifyTurnProgressFenceFailure, type TurnKeys } from './turns';
 
 export async function appendToEvents(db: Kysely<Database>, input: AppendToEventsInput): Promise<void> {
   if (input.events.length === 0) {
     return;
   }
 
-  const keys: TurnWriteKeys = {
+  const keys: TurnKeys = {
     session_id: input.session_id,
     turn_id: input.turn_id,
     expected_active_executor_id: input.expected_active_executor_id,
@@ -45,7 +45,7 @@ export async function appendToEvents(db: Kysely<Database>, input: AppendToEvents
       .executeTakeFirst();
 
     if (!fenceRow) {
-      await classifyTurnFenceWriteFailure(trx, keys);
+      await classifyTurnProgressFenceFailure(trx, keys);
     }
 
     const eventRows = input.events.map(event => ({

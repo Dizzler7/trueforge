@@ -16,11 +16,10 @@ import { jsonbBind, jsonbSet, nowIso } from '../../sqlExpressions';
 import type { Database, TurnThreadCheckpoint } from '../../types';
 import { sortedByAppendId } from '../sqlExpressions';
 import {
-  assertTurnRunning,
-  classifyTurnFenceWriteFailure,
-  classifyTurnThreadWriteFailure,
+  assertTurnProgressAllowed,
+  classifyTurnProgressFenceFailure,
+  classifyTurnThreadProgressFailure,
   type TurnKeys,
-  type TurnWriteKeys,
 } from './turns';
 
 type DbOrTrx = Kysely<Database> | Transaction<Database>;
@@ -31,7 +30,7 @@ type DbOrTrx = Kysely<Database> | Transaction<Database>;
  */
 export async function addThreads(db: Kysely<Database>, input: AddThreadsInput): Promise<void> {
   await db.transaction().execute(async trx => {
-    await assertTurnRunning(trx, {
+    await assertTurnProgressAllowed(trx, {
       session_id: input.session_id,
       turn_id: input.turn_id,
       expected_active_executor_id: input.expected_active_executor_id,
@@ -180,7 +179,7 @@ export async function removeThreads(db: Kysely<Database>, input: RemoveThreadsIn
   }
 
   await db.transaction().execute(async trx => {
-    await assertTurnRunning(trx, {
+    await assertTurnProgressAllowed(trx, {
       session_id: input.session_id,
       turn_id: input.turn_id,
       expected_active_executor_id: input.expected_active_executor_id,
@@ -237,7 +236,7 @@ function usageSetExpr(usage: CurrentContextUsage | null): RawBuilder<string> {
 async function fencedTurnThreadContextUpdate(
   db: Kysely<Database>,
   args: {
-    keys: TurnWriteKeys;
+    keys: TurnKeys;
     thread_id: string;
     context: ContextMessage[];
     replace_array: boolean;
@@ -250,7 +249,7 @@ async function fencedTurnThreadContextUpdate(
   const { keys, thread_id, context, replace_array } = args;
 
   await db.transaction().execute(async trx => {
-    await assertTurnRunning(trx, keys);
+    await assertTurnProgressAllowed(trx, keys);
 
     const now = nowIso();
 
@@ -318,7 +317,7 @@ async function fencedTurnThreadContextUpdate(
       .executeTakeFirst();
 
     if (Number(updateResult.numUpdatedRows) === 0) {
-      await classifyTurnThreadWriteFailure(trx, keys, thread_id);
+      await classifyTurnThreadProgressFailure(trx, keys, thread_id);
     }
   });
 }
@@ -373,7 +372,7 @@ export async function patchMCPServers(db: Kysely<Database>, input: PatchMCPServe
     serversById[server.id] = server;
   }
 
-  const keys: TurnWriteKeys = {
+  const keys: TurnKeys = {
     session_id: input.session_id,
     turn_id: input.turn_id,
     expected_active_executor_id: input.expected_active_executor_id,
@@ -411,7 +410,7 @@ export async function patchMCPServers(db: Kysely<Database>, input: PatchMCPServe
     .executeTakeFirst();
 
   if (Number(result.numUpdatedRows) === 0) {
-    await classifyTurnFenceWriteFailure(db, keys);
+    await classifyTurnProgressFenceFailure(db, keys);
   }
 }
 
@@ -419,7 +418,7 @@ export async function patchMCPServers(db: Kysely<Database>, input: PatchMCPServe
  * patchSandboxInfo — LWW replace via jsonb_set on sandbox_info key.
  */
 export async function patchSandboxInfo(db: Kysely<Database>, input: PatchSandboxInfoInput): Promise<void> {
-  const keys: TurnWriteKeys = {
+  const keys: TurnKeys = {
     session_id: input.session_id,
     turn_id: input.turn_id,
     expected_active_executor_id: input.expected_active_executor_id,
@@ -437,6 +436,6 @@ export async function patchSandboxInfo(db: Kysely<Database>, input: PatchSandbox
     .executeTakeFirst();
 
   if (Number(result.numUpdatedRows) === 0) {
-    await classifyTurnFenceWriteFailure(db, keys);
+    await classifyTurnProgressFenceFailure(db, keys);
   }
 }

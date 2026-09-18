@@ -60,10 +60,6 @@ export interface NewThreadRegistration {
 export interface TurnKeys {
   session_id: string;
   turn_id: string;
-}
-
-/** Turn keys for progress writes: must match the owning replica. */
-export interface TurnWriteKeys extends TurnKeys {
   expected_active_executor_id: string;
 }
 
@@ -173,8 +169,8 @@ async function loadTurnFenceRow(
   return { state: row.state, active_executor_id: row.active_executor_id };
 }
 
-/** Classify a 0-row fenced write: missing, wrong owner, or frozen/non-running. */
-export async function classifyTurnFenceWriteFailure(db: DbOrTrx, keys: TurnWriteKeys): Promise<never> {
+/** Classify a 0-row progress-fenced write: missing, wrong owner, or not running. */
+export async function classifyTurnProgressFenceFailure(db: DbOrTrx, keys: TurnKeys): Promise<never> {
   const row = await loadTurnFenceRow(db, keys);
   if (!row) {
     throw new TurnNotFoundError(keys.turn_id);
@@ -190,11 +186,11 @@ export async function classifyTurnFenceWriteFailure(db: DbOrTrx, keys: TurnWrite
 }
 
 /**
- * Classify a 0-row fenced turn_thread UPDATE: turn missing/terminal/wrong owner vs thread row missing.
+ * Classify a 0-row progress-fenced turn_thread UPDATE: missing/terminal/wrong owner vs thread missing.
  */
-export async function classifyTurnThreadWriteFailure(
+export async function classifyTurnThreadProgressFailure(
   db: DbOrTrx,
-  keys: TurnWriteKeys,
+  keys: TurnKeys,
   thread_id: string,
 ): Promise<never> {
   const row = await loadTurnFenceRow(db, keys);
@@ -214,7 +210,7 @@ export async function classifyTurnThreadWriteFailure(
   throw new SessionStoreInvariantError(`thread ${thread_id} not found in turn ${keys.turn_id}`);
 }
 
-export async function assertTurnRunning(db: DbOrTrx, keys: TurnWriteKeys): Promise<void> {
+export async function assertTurnProgressAllowed(db: DbOrTrx, keys: TurnKeys): Promise<void> {
   const row = await loadTurnFenceRow(db, keys);
   if (!row) {
     throw new TurnNotFoundError(keys.turn_id);

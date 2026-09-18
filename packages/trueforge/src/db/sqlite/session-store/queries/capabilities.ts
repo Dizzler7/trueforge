@@ -2,7 +2,7 @@ import type { PatchThreadCapabilityStateInput } from '@truefoundry/trueforge-cor
 import { sql, type Kysely } from 'kysely';
 import { jsonbBind, nowIso } from '../../sqlExpressions';
 import type { Database } from '../../types';
-import { classifyTurnFenceWriteFailure } from './turns';
+import { classifyTurnProgressFenceFailure } from './turns';
 
 /**
  * patchThreadCapabilityState — single-statement fenced upsert on the PER-TURN PK.
@@ -24,7 +24,7 @@ export async function patchThreadCapabilityState(
       .executeTakeFirst();
 
     if (!fenceRow) {
-      await classifyTurnFenceWriteFailure(trx, input);
+      await classifyTurnProgressFenceFailure(trx, input);
     }
 
     const now = nowIso();

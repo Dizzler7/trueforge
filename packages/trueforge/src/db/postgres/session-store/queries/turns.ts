@@ -60,10 +60,7 @@ export interface NewThreadRegistration {
 export interface TurnKeys {
   session_id: string;
   turn_id: string;
-}
-
-/** Turn keys for progress writes: must match the owning replica. */
-export interface TurnWriteKeys extends TurnKeys {
+  /** Must equal the turn row's active_executor_id or the write is rejected. */
   expected_active_executor_id: string;
 }
 
@@ -168,13 +165,12 @@ function terminalTurnState(state: TurnState, turn_id: string): TerminalTurnState
 }
 
 /**
- * Locking CTE body for single-statement turn-scoped writes: fence + write in one
- * network call. Under READ COMMITTED, FOR SHARE re-checks the predicate after a
- * lock wait, so a committed freeze empties the fence and the write inserts 0 rows;
- * error classification happens on that rare 0-row path.
- * Multi-statement turn-scoped writes use {@link assertTurnRunning} instead.
+ * Locking CTE for single-statement progress writes: turn must be running and owned
+ * by expected_active_executor_id. Under READ COMMITTED, FOR SHARE re-checks after a
+ * lock wait, so freeze or owner change empties the fence (0-row write → classify).
+ * Multi-statement progress writes use {@link assertTurnProgressAllowed} instead.
  */
-export function turnRunningFence(db: TurnFenceDb, keys: TurnWriteKeys) {
+export function turnProgressFence(db: TurnFenceDb, keys: TurnKeys) {
   return db
     .selectFrom('turn')
     .select(sql`1`.as('one'))
@@ -185,8 +181,8 @@ export function turnRunningFence(db: TurnFenceDb, keys: TurnWriteKeys) {
     .forShare();
 }
 
-/** Classify a 0-row fenced write: missing, wrong owner, or frozen/non-running. */
-export async function classifyTurnFenceWriteFailure(db: Kysely<Database>, keys: TurnWriteKeys): Promise<never> {
+/** Classify a 0-row progress-fenced write: missing, wrong owner, or not running. */
+export async function classifyTurnProgressFenceFailure(db: Kysely<Database>, keys: TurnKeys): Promise<never> {
   const row = await db
     .selectFrom('turn')
     .select(['state', 'active_executor_id'])
@@ -208,11 +204,11 @@ export async function classifyTurnFenceWriteFailure(db: Kysely<Database>, keys: 
 }
 
 /**
- * Classify a 0-row fenced turn_thread UPDATE: turn missing/terminal/wrong owner vs thread row missing.
+ * Classify a 0-row progress-fenced turn_thread UPDATE: missing/terminal/wrong owner vs thread missing.
  */
-export async function classifyTurnThreadWriteFailure(
+export async function classifyTurnThreadProgressFailure(
   db: Kysely<Database>,
-  keys: TurnWriteKeys,
+  keys: TurnKeys,
   thread_id: string,
 ): Promise<never> {
   const row = await db
@@ -238,7 +234,7 @@ export async function classifyTurnThreadWriteFailure(
   throw new SessionStoreInvariantError(`thread ${thread_id} not found in turn ${keys.turn_id}`);
 }
 
-export async function assertTurnRunning(db: DbOrTrx, keys: TurnWriteKeys): Promise<void> {
+export async function assertTurnProgressAllowed(db: DbOrTrx, keys: TurnKeys): Promise<void> {
   // SELECT ... FOR SHARE serializes against freezeAndGetTurn's state UPDATE.
   const row = await db
     .selectFrom('turn')
