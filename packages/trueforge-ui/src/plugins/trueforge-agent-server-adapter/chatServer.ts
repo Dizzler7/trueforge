@@ -129,9 +129,13 @@ export interface HarnessPageSource<T> {
 
 export function toListResult<TSource, TResult>(
   page: HarnessPageSource<TSource>,
-  map: (item: TSource) => TResult,
+  map: (item: TSource) => TResult | undefined,
 ): ListResult<TResult> {
-  const data = page.data.map(map);
+  const data: TResult[] = [];
+  for (const item of page.data) {
+    const mapped = map(item);
+    if (mapped !== undefined) data.push(mapped);
+  }
   const token = page.response.pagination.nextPageToken;
   return {
     data,
@@ -242,10 +246,13 @@ export function createHarnessChatServer(
       });
       let fallbackSequence = 0;
       for await (const item of stream.withMetadata()) {
-        yield {
-          sequenceNumber: sequenceNumber(item.id, fallbackSequence),
-          event: toUiStreamingEvent(item.data),
-        };
+        const event = toUiStreamingEvent(item.data);
+        if (event !== undefined) {
+          yield {
+            sequenceNumber: sequenceNumber(item.id, fallbackSequence),
+            event,
+          };
+        }
         fallbackSequence += 1;
       }
     },
@@ -265,10 +272,13 @@ export function createHarnessChatServer(
       });
       let fallbackSequence = 0;
       for await (const item of stream.withMetadata()) {
-        yield {
-          sequenceNumber: sequenceNumber(item.id, fallbackSequence),
-          event: toUiStreamingEvent(item.data),
-        };
+        const event = toUiStreamingEvent(item.data);
+        if (event !== undefined) {
+          yield {
+            sequenceNumber: sequenceNumber(item.id, fallbackSequence),
+            event,
+          };
+        }
         fallbackSequence += 1;
       }
     },
