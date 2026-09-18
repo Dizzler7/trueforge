@@ -4,7 +4,7 @@ type InboundInsertEvent = InsertSessionInboundEventsInput['events'][number];
 
 /** First repeated `event_id` in the batch (input order), if any. */
 export function firstDuplicateEventIdInBatch(
-  events: ReadonlyArray<Pick<InboundInsertEvent, 'event_id'>>,
+  events: readonly Pick<InboundInsertEvent, 'event_id'>[],
 ): string | undefined {
   const seen = new Set<string>();
   for (const event of events) {
@@ -21,7 +21,7 @@ export function firstDuplicateEventIdInBatch(
  * that already exists.
  */
 export function firstCollidingEventId(
-  events: ReadonlyArray<Pick<InboundInsertEvent, 'event_id'>>,
+  events: readonly Pick<InboundInsertEvent, 'event_id'>[],
   existingEventIds: ReadonlySet<string>,
 ): string {
   return events.find(e => existingEventIds.has(e.event_id))?.event_id ?? events[0]?.event_id ?? '';
