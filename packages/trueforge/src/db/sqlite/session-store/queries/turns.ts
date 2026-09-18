@@ -18,6 +18,7 @@ import {
   SessionStoreInvariantError,
   SessionStoreNotFoundError,
   TurnAlreadyExistsError,
+  TurnExecutorMismatchError,
   TurnNotFoundError,
   TurnNotRunningError,
 } from '@truefoundry/trueforge-core/agent-session/store/SessionStoreErrors';
@@ -59,6 +60,11 @@ export interface NewThreadRegistration {
 export interface TurnKeys {
   session_id: string;
   turn_id: string;
+}
+
+/** Turn keys for progress writes: must match the owning replica. */
+export interface TurnWriteKeys extends TurnKeys {
+  expected_active_executor_id: string;
 }
 
 export interface NewContextAppend {
@@ -151,46 +157,77 @@ function terminalTurnState(state: TurnState, turn_id: string): TerminalTurnState
   }
 }
 
-async function loadTurnState(db: DbOrTrx, keys: TurnKeys): Promise<TurnState | undefined> {
+async function loadTurnFenceRow(
+  db: DbOrTrx,
+  keys: TurnKeys,
+): Promise<{ state: TurnState; active_executor_id: string } | undefined> {
   const row = await db
     .selectFrom('turn')
-    .select([jsonText<TurnState>(sql.ref('state')).as('state')])
+    .select([jsonText<TurnState>(sql.ref('state')).as('state'), 'active_executor_id'])
     .where('session_id', '=', keys.session_id)
     .where('turn_id', '=', keys.turn_id)
     .executeTakeFirst();
-  return row?.state;
+  if (!row) {
+    return undefined;
+  }
+  return { state: row.state, active_executor_id: row.active_executor_id };
 }
 
-/** Classify a 0-row fenced write: missing turn vs frozen/non-running turn. */
-export async function classifyTurnFenceWriteFailure(db: DbOrTrx, keys: TurnKeys): Promise<never> {
-  const state = await loadTurnState(db, keys);
-  if (!state) {
+/** Classify a 0-row fenced write: missing, wrong owner, or frozen/non-running. */
+export async function classifyTurnFenceWriteFailure(db: DbOrTrx, keys: TurnWriteKeys): Promise<never> {
+  const row = await loadTurnFenceRow(db, keys);
+  if (!row) {
     throw new TurnNotFoundError(keys.turn_id);
   }
-  throw new TurnNotRunningError(keys.turn_id, terminalTurnState(state, keys.turn_id));
+  if (row.state.status === 'running' && row.active_executor_id !== keys.expected_active_executor_id) {
+    throw new TurnExecutorMismatchError({
+      turn_id: keys.turn_id,
+      expected_active_executor_id: keys.expected_active_executor_id,
+      active_executor_id: row.active_executor_id,
+    });
+  }
+  throw new TurnNotRunningError(keys.turn_id, terminalTurnState(row.state, keys.turn_id));
 }
 
 /**
- * Classify a 0-row fenced turn_thread UPDATE: turn missing/terminal vs thread row missing.
+ * Classify a 0-row fenced turn_thread UPDATE: turn missing/terminal/wrong owner vs thread row missing.
  */
-export async function classifyTurnThreadWriteFailure(db: DbOrTrx, keys: TurnKeys, thread_id: string): Promise<never> {
-  const state = await loadTurnState(db, keys);
-  if (!state) {
+export async function classifyTurnThreadWriteFailure(
+  db: DbOrTrx,
+  keys: TurnWriteKeys,
+  thread_id: string,
+): Promise<never> {
+  const row = await loadTurnFenceRow(db, keys);
+  if (!row) {
     throw new TurnNotFoundError(keys.turn_id);
   }
-  if (state.status !== 'running') {
-    throw new TurnNotRunningError(keys.turn_id, terminalTurnState(state, keys.turn_id));
+  if (row.state.status !== 'running') {
+    throw new TurnNotRunningError(keys.turn_id, terminalTurnState(row.state, keys.turn_id));
+  }
+  if (row.active_executor_id !== keys.expected_active_executor_id) {
+    throw new TurnExecutorMismatchError({
+      turn_id: keys.turn_id,
+      expected_active_executor_id: keys.expected_active_executor_id,
+      active_executor_id: row.active_executor_id,
+    });
   }
   throw new SessionStoreInvariantError(`thread ${thread_id} not found in turn ${keys.turn_id}`);
 }
 
-export async function assertTurnRunning(db: DbOrTrx, keys: TurnKeys): Promise<void> {
-  const state = await loadTurnState(db, keys);
-  if (!state) {
+export async function assertTurnRunning(db: DbOrTrx, keys: TurnWriteKeys): Promise<void> {
+  const row = await loadTurnFenceRow(db, keys);
+  if (!row) {
     throw new TurnNotFoundError(keys.turn_id);
   }
-  if (state.status !== 'running') {
-    throw new TurnNotRunningError(keys.turn_id, terminalTurnState(state, keys.turn_id));
+  if (row.state.status !== 'running') {
+    throw new TurnNotRunningError(keys.turn_id, terminalTurnState(row.state, keys.turn_id));
+  }
+  if (row.active_executor_id !== keys.expected_active_executor_id) {
+    throw new TurnExecutorMismatchError({
+      turn_id: keys.turn_id,
+      expected_active_executor_id: keys.expected_active_executor_id,
+      active_executor_id: row.active_executor_id,
+    });
   }
 }
 

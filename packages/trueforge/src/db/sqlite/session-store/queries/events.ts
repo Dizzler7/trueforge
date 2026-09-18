@@ -21,16 +21,17 @@ import {
 import { sql, type Kysely } from 'kysely';
 import { jsonbBind, jsonText } from '../../sqlExpressions';
 import type { Database } from '../../types';
-import { classifyTurnFenceWriteFailure, type TurnKeys } from './turns';
+import { classifyTurnFenceWriteFailure, type TurnWriteKeys } from './turns';
 
 export async function appendToEvents(db: Kysely<Database>, input: AppendToEventsInput): Promise<void> {
   if (input.events.length === 0) {
     return;
   }
 
-  const keys: TurnKeys = {
+  const keys: TurnWriteKeys = {
     session_id: input.session_id,
     turn_id: input.turn_id,
+    expected_active_executor_id: input.expected_active_executor_id,
   };
 
   // Fence check first inside BEGIN IMMEDIATE; then batched insert.

@@ -33,6 +33,7 @@ export async function appendToEvents(db: Kysely<Database>, input: AppendToEvents
   const keys = {
     session_id: input.session_id,
     turn_id: input.turn_id,
+    expected_active_executor_id: input.expected_active_executor_id,
   };
 
   const eventRows = input.events.map(event => ({

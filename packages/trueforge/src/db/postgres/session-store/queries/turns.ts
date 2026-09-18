@@ -18,6 +18,7 @@ import {
   SessionStoreInvariantError,
   SessionStoreNotFoundError,
   TurnAlreadyExistsError,
+  TurnExecutorMismatchError,
   TurnNotFoundError,
   TurnNotRunningError,
 } from '@truefoundry/trueforge-core/agent-session/store/SessionStoreErrors';
@@ -59,6 +60,11 @@ export interface NewThreadRegistration {
 export interface TurnKeys {
   session_id: string;
   turn_id: string;
+}
+
+/** Turn keys for progress writes: must match the owning replica. */
+export interface TurnWriteKeys extends TurnKeys {
+  expected_active_executor_id: string;
 }
 
 export interface NewContextAppend {
@@ -168,21 +174,22 @@ function terminalTurnState(state: TurnState, turn_id: string): TerminalTurnState
  * error classification happens on that rare 0-row path.
  * Multi-statement turn-scoped writes use {@link assertTurnRunning} instead.
  */
-export function turnRunningFence(db: TurnFenceDb, keys: TurnKeys) {
+export function turnRunningFence(db: TurnFenceDb, keys: TurnWriteKeys) {
   return db
     .selectFrom('turn')
     .select(sql`1`.as('one'))
     .where('session_id', '=', keys.session_id)
     .where('turn_id', '=', keys.turn_id)
     .where(sql`state->>'status'`, '=', 'running')
+    .where('active_executor_id', '=', keys.expected_active_executor_id)
     .forShare();
 }
 
-/** Classify a 0-row fenced write: missing turn vs frozen/non-running turn. */
-export async function classifyTurnFenceWriteFailure(db: Kysely<Database>, keys: TurnKeys): Promise<never> {
+/** Classify a 0-row fenced write: missing, wrong owner, or frozen/non-running. */
+export async function classifyTurnFenceWriteFailure(db: Kysely<Database>, keys: TurnWriteKeys): Promise<never> {
   const row = await db
     .selectFrom('turn')
-    .select('state')
+    .select(['state', 'active_executor_id'])
     .where('session_id', '=', keys.session_id)
     .where('turn_id', '=', keys.turn_id)
     .executeTakeFirst();
@@ -190,20 +197,27 @@ export async function classifyTurnFenceWriteFailure(db: Kysely<Database>, keys: 
   if (!row) {
     throw new TurnNotFoundError(keys.turn_id);
   }
+  if (row.state.status === 'running' && row.active_executor_id !== keys.expected_active_executor_id) {
+    throw new TurnExecutorMismatchError({
+      turn_id: keys.turn_id,
+      expected_active_executor_id: keys.expected_active_executor_id,
+      active_executor_id: row.active_executor_id,
+    });
+  }
   throw new TurnNotRunningError(keys.turn_id, terminalTurnState(row.state, keys.turn_id));
 }
 
 /**
- * Classify a 0-row fenced turn_thread UPDATE: turn missing/terminal vs thread row missing.
+ * Classify a 0-row fenced turn_thread UPDATE: turn missing/terminal/wrong owner vs thread row missing.
  */
 export async function classifyTurnThreadWriteFailure(
   db: Kysely<Database>,
-  keys: TurnKeys,
+  keys: TurnWriteKeys,
   thread_id: string,
 ): Promise<never> {
   const row = await db
     .selectFrom('turn')
-    .select('state')
+    .select(['state', 'active_executor_id'])
     .where('session_id', '=', keys.session_id)
     .where('turn_id', '=', keys.turn_id)
     .executeTakeFirst();
@@ -214,14 +228,21 @@ export async function classifyTurnThreadWriteFailure(
   if (row.state.status !== 'running') {
     throw new TurnNotRunningError(keys.turn_id, terminalTurnState(row.state, keys.turn_id));
   }
+  if (row.active_executor_id !== keys.expected_active_executor_id) {
+    throw new TurnExecutorMismatchError({
+      turn_id: keys.turn_id,
+      expected_active_executor_id: keys.expected_active_executor_id,
+      active_executor_id: row.active_executor_id,
+    });
+  }
   throw new SessionStoreInvariantError(`thread ${thread_id} not found in turn ${keys.turn_id}`);
 }
 
-export async function assertTurnRunning(db: DbOrTrx, keys: TurnKeys): Promise<void> {
+export async function assertTurnRunning(db: DbOrTrx, keys: TurnWriteKeys): Promise<void> {
   // SELECT ... FOR SHARE serializes against freezeAndGetTurn's state UPDATE.
   const row = await db
     .selectFrom('turn')
-    .select('state')
+    .select(['state', 'active_executor_id'])
     .where('session_id', '=', keys.session_id)
     .where('turn_id', '=', keys.turn_id)
     .forShare()
@@ -232,6 +253,13 @@ export async function assertTurnRunning(db: DbOrTrx, keys: TurnKeys): Promise<vo
   }
   if (row.state.status !== 'running') {
     throw new TurnNotRunningError(keys.turn_id, terminalTurnState(row.state, keys.turn_id));
+  }
+  if (row.active_executor_id !== keys.expected_active_executor_id) {
+    throw new TurnExecutorMismatchError({
+      turn_id: keys.turn_id,
+      expected_active_executor_id: keys.expected_active_executor_id,
+      active_executor_id: row.active_executor_id,
+    });
   }
 }
 

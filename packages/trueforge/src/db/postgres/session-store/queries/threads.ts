@@ -22,7 +22,7 @@ import {
   classifyTurnFenceWriteFailure,
   classifyTurnThreadWriteFailure,
   turnRunningFence,
-  type TurnKeys,
+  type TurnWriteKeys,
 } from './turns';
 
 type DbOrTrx = Kysely<Database> | Transaction<Database>;
@@ -45,6 +45,7 @@ export async function addThreads(db: Kysely<Database>, input: AddThreadsInput): 
     await assertTurnRunning(trx, {
       session_id: input.session_id,
       turn_id: input.turn_id,
+      expected_active_executor_id: input.expected_active_executor_id,
     });
 
     const now = new Date();
@@ -153,9 +154,10 @@ export async function removeThreads(db: Kysely<Database>, input: RemoveThreadsIn
     return;
   }
 
-  const keys: TurnKeys = {
+  const keys: TurnWriteKeys = {
     session_id: input.session_id,
     turn_id: input.turn_id,
+    expected_active_executor_id: input.expected_active_executor_id,
   };
   const onFence = sql<boolean>`EXISTS (SELECT 1 FROM turn_fence)`;
 
@@ -204,7 +206,7 @@ function usageSetExpr(usage: CurrentContextUsage | null): RawBuilder<CurrentCont
 async function fencedTurnThreadContextUpdate(
   db: Kysely<Database>,
   args: {
-    keys: TurnKeys;
+    keys: TurnWriteKeys;
     thread_id: string;
     context: ContextMessage[];
     replace_array: boolean;
@@ -299,6 +301,7 @@ export async function appendToThreadContext(db: Kysely<Database>, input: AppendT
     keys: {
       session_id: input.session_id,
       turn_id: input.turn_id,
+      expected_active_executor_id: input.expected_active_executor_id,
     },
     thread_id: input.thread_id,
     context: input.context,
@@ -318,6 +321,7 @@ export async function overwriteThreadContext(db: Kysely<Database>, input: Overwr
     keys: {
       session_id: input.session_id,
       turn_id: input.turn_id,
+      expected_active_executor_id: input.expected_active_executor_id,
     },
     thread_id: input.event.thread_id,
     context: input.event.context,
@@ -339,9 +343,10 @@ export async function patchMCPServers(db: Kysely<Database>, input: PatchMCPServe
     serversById[server.id] = server;
   }
 
-  const keys: TurnKeys = {
+  const keys: TurnWriteKeys = {
     session_id: input.session_id,
     turn_id: input.turn_id,
+    expected_active_executor_id: input.expected_active_executor_id,
   };
 
   const result = await db
@@ -368,9 +373,10 @@ export async function patchMCPServers(db: Kysely<Database>, input: PatchMCPServe
  * (`state->>'status' = 'running'`). LWW replace via subscript assignment.
  */
 export async function patchSandboxInfo(db: Kysely<Database>, input: PatchSandboxInfoInput): Promise<void> {
-  const keys: TurnKeys = {
+  const keys: TurnWriteKeys = {
     session_id: input.session_id,
     turn_id: input.turn_id,
+    expected_active_executor_id: input.expected_active_executor_id,
   };
 
   const result = await db

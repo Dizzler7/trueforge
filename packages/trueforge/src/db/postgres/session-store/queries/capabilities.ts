@@ -16,6 +16,7 @@ export async function patchThreadCapabilityState(
   const keys = {
     session_id: input.session_id,
     turn_id: input.turn_id,
+    expected_active_executor_id: input.expected_active_executor_id,
   };
 
   const rows = await db

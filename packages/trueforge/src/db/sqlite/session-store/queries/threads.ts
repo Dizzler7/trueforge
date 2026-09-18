@@ -20,6 +20,7 @@ import {
   classifyTurnFenceWriteFailure,
   classifyTurnThreadWriteFailure,
   type TurnKeys,
+  type TurnWriteKeys,
 } from './turns';
 
 type DbOrTrx = Kysely<Database> | Transaction<Database>;
@@ -33,6 +34,7 @@ export async function addThreads(db: Kysely<Database>, input: AddThreadsInput): 
     await assertTurnRunning(trx, {
       session_id: input.session_id,
       turn_id: input.turn_id,
+      expected_active_executor_id: input.expected_active_executor_id,
     });
 
     const now = nowIso();
@@ -181,6 +183,7 @@ export async function removeThreads(db: Kysely<Database>, input: RemoveThreadsIn
     await assertTurnRunning(trx, {
       session_id: input.session_id,
       turn_id: input.turn_id,
+      expected_active_executor_id: input.expected_active_executor_id,
     });
 
     await trx
@@ -234,7 +237,7 @@ function usageSetExpr(usage: CurrentContextUsage | null): RawBuilder<string> {
 async function fencedTurnThreadContextUpdate(
   db: Kysely<Database>,
   args: {
-    keys: TurnKeys;
+    keys: TurnWriteKeys;
     thread_id: string;
     context: ContextMessage[];
     replace_array: boolean;
@@ -329,6 +332,7 @@ export async function appendToThreadContext(db: Kysely<Database>, input: AppendT
     keys: {
       session_id: input.session_id,
       turn_id: input.turn_id,
+      expected_active_executor_id: input.expected_active_executor_id,
     },
     thread_id: input.thread_id,
     context: input.context,
@@ -348,6 +352,7 @@ export async function overwriteThreadContext(db: Kysely<Database>, input: Overwr
     keys: {
       session_id: input.session_id,
       turn_id: input.turn_id,
+      expected_active_executor_id: input.expected_active_executor_id,
     },
     thread_id: input.event.thread_id,
     context: input.event.context,
@@ -368,9 +373,10 @@ export async function patchMCPServers(db: Kysely<Database>, input: PatchMCPServe
     serversById[server.id] = server;
   }
 
-  const keys: TurnKeys = {
+  const keys: TurnWriteKeys = {
     session_id: input.session_id,
     turn_id: input.turn_id,
+    expected_active_executor_id: input.expected_active_executor_id,
   };
 
   // jsonb_patch is RFC 7396 (deep); rebuild via json_each so each id's value is replaced.
@@ -413,9 +419,10 @@ export async function patchMCPServers(db: Kysely<Database>, input: PatchMCPServe
  * patchSandboxInfo — LWW replace via jsonb_set on sandbox_info key.
  */
 export async function patchSandboxInfo(db: Kysely<Database>, input: PatchSandboxInfoInput): Promise<void> {
-  const keys: TurnKeys = {
+  const keys: TurnWriteKeys = {
     session_id: input.session_id,
     turn_id: input.turn_id,
+    expected_active_executor_id: input.expected_active_executor_id,
   };
 
   const result = await db
