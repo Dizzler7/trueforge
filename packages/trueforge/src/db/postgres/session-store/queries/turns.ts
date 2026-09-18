@@ -150,15 +150,11 @@ async function addSessionCostAndDuration(
     .execute();
 }
 
-function terminalTurnState(state: TurnState, turn_id: string): TerminalTurnState {
-  switch (state.status) {
-    case 'running':
-      throw new SessionStoreInvariantError(`expected terminal state for turn ${turn_id}, got running`);
-    case 'done':
-    case 'cancelled':
-    case 'error':
-      return state;
+function nonRunningTurnState(state: TurnState, turn_id: string): Exclude<TurnState, { status: 'running' }> {
+  if (state.status === 'running') {
+    throw new SessionStoreInvariantError(`expected non-running state for turn ${turn_id}, got running`);
   }
+  return state;
 }
 
 /**
@@ -190,7 +186,7 @@ export async function classifyTurnFenceWriteFailure(db: Kysely<Database>, keys: 
   if (!row) {
     throw new TurnNotFoundError(keys.turn_id);
   }
-  throw new TurnNotRunningError(keys.turn_id, terminalTurnState(row.state, keys.turn_id));
+  throw new TurnNotRunningError(keys.turn_id, nonRunningTurnState(row.state, keys.turn_id));
 }
 
 /**
@@ -212,7 +208,7 @@ export async function classifyTurnThreadWriteFailure(
     throw new TurnNotFoundError(keys.turn_id);
   }
   if (row.state.status !== 'running') {
-    throw new TurnNotRunningError(keys.turn_id, terminalTurnState(row.state, keys.turn_id));
+    throw new TurnNotRunningError(keys.turn_id, nonRunningTurnState(row.state, keys.turn_id));
   }
   throw new SessionStoreInvariantError(`thread ${thread_id} not found in turn ${keys.turn_id}`);
 }
@@ -231,7 +227,7 @@ export async function assertTurnRunning(db: DbOrTrx, keys: TurnKeys): Promise<vo
     throw new TurnNotFoundError(keys.turn_id);
   }
   if (row.state.status !== 'running') {
-    throw new TurnNotRunningError(keys.turn_id, terminalTurnState(row.state, keys.turn_id));
+    throw new TurnNotRunningError(keys.turn_id, nonRunningTurnState(row.state, keys.turn_id));
   }
 }
 
@@ -774,7 +770,7 @@ export async function updateTurnState(db: Kysely<Database>, input: UpdateTurnSta
       if (!existing) {
         throw new TurnNotFoundError(input.turn_id);
       }
-      throw new TurnNotRunningError(input.turn_id, terminalTurnState(existing.state, input.turn_id));
+      throw new TurnNotRunningError(input.turn_id, nonRunningTurnState(existing.state, input.turn_id));
     }
 
     if (input.state.status !== 'paused') {

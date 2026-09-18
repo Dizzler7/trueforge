@@ -159,12 +159,7 @@ export interface ListTurnsInput {
 export interface UpdateTurnStateInput {
   session_id: string;
   turn_id: string;
-  /** Tip after the flip: terminal (`done`/`cancelled`/`error`) or HITL `paused`. */
   state: Exclude<TurnState, { status: 'running' }>;
-  /**
-   * Caller-built companion event written atomically with the state flip.
-   * Terminal → `turn.done`; paused → `turn.update` with paused state.
-   */
   turn_done_event: PersistedTurnEvent;
 }
 

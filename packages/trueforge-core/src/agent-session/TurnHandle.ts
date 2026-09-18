@@ -24,13 +24,7 @@ import {
   type TurnUpdateEvent,
 } from './schemas/events';
 import type { TokenPagination } from './schemas/pagination';
-import {
-  CancellationReason,
-  type TerminalTurnState,
-  type TurnInputItem,
-  type TurnMetrics,
-  type TurnState,
-} from './schemas/turn';
+import { CancellationReason, type TurnInputItem, type TurnMetrics, type TurnState } from './schemas/turn';
 import type { ISessionStore } from './store/ISessionStore';
 import { TurnNotRunningError } from './store/SessionStoreErrors';
 
@@ -88,6 +82,29 @@ function turnMetricsFromAgentThreadMetrics(metrics: AgentThreadMetrics): TurnMet
     total_cache_write_tokens: metrics.total_cache_write_tokens,
     total_reasoning_tokens: metrics.total_reasoning_tokens,
     total_cost_in_usd: metrics.total_cost_in_usd,
+  };
+}
+
+function streamEventForStoreState(input: {
+  state: Exclude<TurnState, { status: 'running' }>;
+  metrics: TurnMetrics;
+  created_at: string;
+}): TurnDoneEvent | TurnUpdateEvent {
+  if (input.state.status === 'paused') {
+    return {
+      type: EventType.TURN_UPDATE,
+      id: newEventId(),
+      created_at: input.created_at,
+      state: input.state,
+      thread_id: null,
+    };
+  }
+  return {
+    type: EventType.TURN_DONE,
+    id: newEventId(),
+    created_at: input.created_at,
+    state: { ...input.state, metrics: input.metrics },
+    thread_id: null,
   };
 }
 
@@ -257,18 +274,14 @@ export class TurnHandle<TTurnCustom extends object = Record<string, never>> {
             generator = undefined;
             const updatedAt = new Date();
             const createdAtIso = updatedAt.toISOString();
-            const state: TerminalTurnState = {
-              ...error.state,
-              metrics: turnMetricsFromAgentThreadMetrics(orchestrator.getMetrics()),
-            };
-            this.turn = { ...this.turn, state, updated_at: updatedAt };
-            yield {
-              type: EventType.TURN_DONE,
-              id: newEventId(),
+            const metrics = turnMetricsFromAgentThreadMetrics(orchestrator.getMetrics());
+            const yielded = streamEventForStoreState({
+              state: error.state,
+              metrics,
               created_at: createdAtIso,
-              state,
-              thread_id: null,
-            };
+            });
+            this.turn = { ...this.turn, state: yielded.state, updated_at: updatedAt };
+            yield yielded;
             return;
           }
           throw error;
@@ -335,22 +348,11 @@ export class TurnHandle<TTurnCustom extends object = Record<string, never>> {
         };
       }
 
-      const turnStateEvent: TurnDoneEvent | TurnUpdateEvent =
-        nextState.status === 'paused'
-          ? {
-              type: EventType.TURN_UPDATE,
-              id: newEventId(),
-              created_at: createdAtIso,
-              state: nextState,
-              thread_id: null,
-            }
-          : {
-              type: EventType.TURN_DONE,
-              id: newEventId(),
-              created_at: createdAtIso,
-              state: nextState,
-              thread_id: null,
-            };
+      const turnStateEvent = streamEventForStoreState({
+        state: nextState,
+        metrics,
+        created_at: createdAtIso,
+      });
 
       if (!frozenByStore) {
         try {
@@ -363,18 +365,16 @@ export class TurnHandle<TTurnCustom extends object = Record<string, never>> {
           this.turn = { ...this.turn, state: nextState, updated_at: updatedAt };
         } catch (persistError) {
           if (persistError instanceof TurnNotRunningError) {
-            const state: TerminalTurnState = { ...persistError.state, metrics };
-            this.turn = { ...this.turn, state, updated_at: updatedAt };
+            const yielded = streamEventForStoreState({
+              state: persistError.state,
+              metrics,
+              created_at: createdAtIso,
+            });
+            this.turn = { ...this.turn, state: yielded.state, updated_at: updatedAt };
             await resolver.close().catch(() => {
               /* no-op */
             });
-            yield {
-              type: EventType.TURN_DONE,
-              id: newEventId(),
-              created_at: createdAtIso,
-              state,
-              thread_id: null,
-            };
+            yield yielded;
             // eslint-disable-next-line no-unsafe-finally -- deliberate: a concurrent freeze during the lifecycle write makes the store's state authoritative, so the stream ends here
             return;
           }

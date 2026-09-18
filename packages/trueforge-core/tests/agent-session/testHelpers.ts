@@ -89,11 +89,13 @@ export function makeTestResolver<TTurnCustom extends object = Record<string, nev
   sandbox?: Sandbox;
   close?: () => Promise<void>;
   usage?: CompletionUsage;
+  /** Override the mock LLM stream; defaults to {@link emptyLlmStream}. */
+  create?: () => AsyncGenerator<unknown, unknown, unknown>;
   /** Named-agent lookup for sessions bound by agent_id. */
   agent?: ((agentId: string) => Promise<AgentSpec>) | undefined;
 }): ITurnResourceResolver<TTurnCustom> {
   const llm = makeMockILLM({
-    create: jest.fn().mockImplementation(() => emptyLlmStream(options?.usage)),
+    create: jest.fn().mockImplementation(() => options?.create?.() ?? emptyLlmStream(options?.usage)),
   });
   const base = new TurnResourceResolver<TTurnCustom>({
     llm: () => Promise.resolve({ modelClient: llm, defaultModelParams: {} }),
