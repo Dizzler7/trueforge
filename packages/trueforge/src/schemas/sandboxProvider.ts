@@ -48,6 +48,7 @@ export const DaytonaSandboxProviderSchema = z
       .int()
       .nonnegative()
       .describe('Minutes before Daytona auto-deletes the sandbox (0 disables).'),
+  })
   .strict()
   .openapi('DaytonaSandboxProvider');
 

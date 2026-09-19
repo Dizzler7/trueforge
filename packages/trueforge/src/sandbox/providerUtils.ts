@@ -17,7 +17,6 @@ import {
   type DaytonaSandboxProvider as DaytonaSandboxProviderManifest,
   type DockerSandboxProvider as DockerSandboxProviderManifest,
   type SandboxBuildMetadata,
-  type SandboxProviderManifest,
   type SandboxStatus,
   type StoredSandboxProviderManifest,
 } from '../schemas/sandboxProvider';

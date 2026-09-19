@@ -384,8 +384,8 @@ export class DockerSandboxProvider implements SandboxProvider {
     return 'skills';
   }
 
-  getGitDownloaderPath(): string {
-    return 'git_downloader.py';
+  getSkillDownloaderPath(): string {
+    return 'skill_downloader.py';
   }
 
   async downloadFile(params: { sandboxId: string; path: string }): Promise<Buffer> {

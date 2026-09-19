@@ -47,7 +47,7 @@ export function createSandboxProvidersRouter<TTransaction>(deps: SandboxProvider
     const requestContext = deps.resolveRequestContext(c);
     const store = deps.resolveSandboxProviderStore(c);
     const record = await store.getSandboxProvider(requestContext.tenant_id);
-    if (record?.manifest.type !== 'daytona') {
+    if (!record || (record.manifest.type !== 'daytona' && record.manifest.type !== 'docker')) {
       return c.json({ error: { message: 'No sandbox provider configured' } }, 404);
     }
     // Refresh the persisted build status (and re-activate an idle snapshot) on every GET.
