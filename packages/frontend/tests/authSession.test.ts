@@ -15,9 +15,12 @@ function createClient(params: { type?: 'default' | 'oidc-connected'; meError?: E
       me: async () => {
         if (params.meError != null) throw params.meError;
         return {
-          type: params.type ?? 'default',
-          email: 'user@example.com',
-          role: 'user',
+          data: {
+            type: params.type ?? 'default',
+            tenantId: 'default',
+            subject: { id: 'user-1', type: 'user', displayName: 'user-1' },
+            roles: [],
+          },
         };
       },
     },
@@ -55,11 +58,19 @@ describe('authSession', () => {
   });
 
   it('probeSession reports authenticated when me() resolves', async () => {
-    assert.equal(await probeSession(createClient({ type: 'default' })), 'authenticated');
-    assert.equal(await probeSession(createClient({ type: 'oidc-connected' })), 'authenticated');
+    assert.deepEqual(await probeSession(createClient({ type: 'default' })), {
+      status: 'authenticated',
+      displayName: 'user-1',
+    });
+    assert.deepEqual(await probeSession(createClient({ type: 'oidc-connected' })), {
+      status: 'authenticated',
+      displayName: 'user-1',
+    });
   });
 
   it('probeSession reports unauthenticated when me() throws', async () => {
-    assert.equal(await probeSession(createClient({ meError: new Error('401') })), 'unauthenticated');
+    assert.deepEqual(await probeSession(createClient({ meError: new Error('401') })), {
+      status: 'unauthenticated',
+    });
   });
 });

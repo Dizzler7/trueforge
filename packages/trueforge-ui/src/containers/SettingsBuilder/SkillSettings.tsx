@@ -16,6 +16,10 @@ const matchesQuery = (query: string, name: string, description: string) =>
 
 const isRegistrySkill = (skill: SkillBase): skill is RegistrySkill => 'catalogId' in skill;
 
+function isManagedSkillError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && Reflect.get(error, 'statusCode') === 424;
+}
+
 const SkillSettings = () => {
   const { skillCatalog } = useCatalogServer();
   const toaster = useToasterOptional();
@@ -27,6 +31,7 @@ const SkillSettings = () => {
   const [error, setError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [managedExternally, setManagedExternally] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -69,6 +74,7 @@ const SkillSettings = () => {
       await fn();
       await refresh();
     } catch (err) {
+      if (isManagedSkillError(err)) setManagedExternally(true);
       setMutationError(getErrorMessage(err, 'Request failed'));
       throw err;
     } finally {
@@ -157,11 +163,10 @@ const SkillSettings = () => {
           <div className="min-w-0 flex-1">
             <SearchInput query={query} setQuery={setQuery} placeholder="Search skills" />
           </div>
-          <Button
-            variant="secondary"
+          <Button.Secondary
             type="button"
             className="shrink-0"
-            disabled={busy}
+            disabled={busy || managedExternally}
             onClick={() => {
               setFormError(null);
               setImportOpen(true);
@@ -169,7 +174,7 @@ const SkillSettings = () => {
           >
             <Icon name="github" className="size-4" />
             Import from GitHub
-          </Button>
+          </Button.Secondary>
         </div>
 
         <div className="flex flex-1 flex-col gap-5 overflow-y-auto pb-1">
@@ -190,18 +195,17 @@ const SkillSettings = () => {
                     name: skill.name,
                     description: skill.description,
                     action: skillCatalog.deleteSkill ? (
-                      <Button
-                        variant="outline"
-                        size="sm"
+                      <Button.Secondary
+                        size="small"
                         type="button"
-                        disabled={busy}
+                        disabled={busy || managedExternally}
                         aria-label={`Remove ${skill.name}`}
                         onClick={() => {
                           handleRemove(skill);
                         }}
                       >
                         Remove
-                      </Button>
+                      </Button.Secondary>
                     ) : null,
                   }),
                 )}
@@ -224,18 +228,17 @@ const SkillSettings = () => {
                     name: entry.name,
                     description: entry.description,
                     action: (
-                      <Button
-                        variant="outline"
-                        size="sm"
+                      <Button.Secondary
+                        size="small"
                         type="button"
-                        disabled={busy}
+                        disabled={busy || managedExternally}
                         aria-label={`Enable ${entry.name}`}
                         onClick={() => {
                           handleSelect(entry);
                         }}
                       >
                         Enable
-                      </Button>
+                      </Button.Secondary>
                     ),
                   }),
                 )}
@@ -258,7 +261,7 @@ const SkillSettings = () => {
           if (!open) setFormError(null);
         }}
         onImport={handleImport}
-        busy={busy}
+        busy={busy || managedExternally}
         error={formError}
       />
     </>

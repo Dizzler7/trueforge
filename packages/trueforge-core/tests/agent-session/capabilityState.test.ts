@@ -19,6 +19,7 @@ import {
   makeSilentLogger,
   makeTestResolver,
   mintTestTurnId,
+  TEST_ACTIVE_EXECUTOR_ID,
 } from './testHelpers';
 
 function makePlanShapedCapability(options: {
@@ -62,8 +63,9 @@ describe('capability_state (tfy.plan fixture)', () => {
     const session = await sessions.create({
       tenant_id: tenant,
       session_id: 's1',
-      created_by: 'user-1',
+      created_by_subject: { subject_id: 'user-1', subject_type: 'user', subject_display_name: 'user-1' },
       agent: { type: 'inline', spec: makeAgentSpec() },
+      external_id: null,
     });
 
     const planV1: JsonValue = {
@@ -73,6 +75,7 @@ describe('capability_state (tfy.plan fixture)', () => {
 
     const turn1 = await session.createTurn({
       turn_id: mintTestTurnId(),
+      active_executor_id: TEST_ACTIVE_EXECUTOR_ID,
       input: [{ type: EventType.USER_MESSAGE, content: 'start' }],
       previous_turn_id: 'none',
       signal: new AbortController().signal,
@@ -101,6 +104,7 @@ describe('capability_state (tfy.plan fixture)', () => {
     loads = [];
     const turn2 = await session.createTurn({
       turn_id: mintTestTurnId(),
+      active_executor_id: TEST_ACTIVE_EXECUTOR_ID,
       input: [{ type: EventType.USER_MESSAGE, content: 'continue' }],
       previous_turn_id: 'auto',
       signal: new AbortController().signal,
@@ -134,8 +138,9 @@ describe('capability_state (tfy.plan fixture)', () => {
     const session = await sessions.create({
       tenant_id: tenant,
       session_id: 's1',
-      created_by: 'user-1',
+      created_by_subject: { subject_id: 'user-1', subject_type: 'user', subject_display_name: 'user-1' },
       agent: { type: 'inline', spec: makeAgentSpec() },
+      external_id: null,
     });
     const planV1: JsonValue = {
       todo: [{ title: 'step', description: 'do it', status: 'done' }],
@@ -143,6 +148,7 @@ describe('capability_state (tfy.plan fixture)', () => {
 
     const turn1 = await session.createTurn({
       turn_id: mintTestTurnId(),
+      active_executor_id: TEST_ACTIVE_EXECUTOR_ID,
       input: [{ type: EventType.USER_MESSAGE, content: 'start' }],
       previous_turn_id: 'none',
       signal: new AbortController().signal,
@@ -176,6 +182,7 @@ describe('capability_state (tfy.plan fixture)', () => {
 
     const turn3 = await session.createTurn({
       turn_id: mintTestTurnId(),
+      active_executor_id: TEST_ACTIVE_EXECUTOR_ID,
       input: [{ type: EventType.USER_MESSAGE, content: 'no plan' }],
       previous_turn_id: 'auto',
       signal: new AbortController().signal,
@@ -227,11 +234,13 @@ describe('capability_state (tfy.plan fixture)', () => {
     const session = await sessions.create({
       tenant_id: tenant,
       session_id: 's1',
-      created_by: 'user-1',
+      created_by_subject: { subject_id: 'user-1', subject_type: 'user', subject_display_name: 'user-1' },
       agent: { type: 'inline', spec: makeAgentSpec() },
+      external_id: null,
     });
     const turn = await session.createTurn({
       turn_id: mintTestTurnId(),
+      active_executor_id: TEST_ACTIVE_EXECUTOR_ID,
       input: [{ type: EventType.USER_MESSAGE, content: 'x' }],
       previous_turn_id: 'none',
       signal: new AbortController().signal,

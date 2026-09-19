@@ -9,14 +9,40 @@ describe("AgentsClient", () => {
         const server = mockServerPool.createServer();
         const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
 
-        const rawResponseBody = { data: [{ id: "id", manifest: { model: { name: "name" } }, name: "name" }] };
-
-        server.mockEndpoint().get("/api/v1/agents").respondWith().statusCode(200).jsonBody(rawResponseBody).build();
-
-        const response = await client.agents.list();
-        expect(response).toEqual({
+        const rawResponseBody = {
             data: [
                 {
+                    created_by_subject: {
+                        subject_display_name: "subject_display_name",
+                        subject_id: "subject_id",
+                        subject_type: "subject_type",
+                    },
+                    description: "description",
+                    id: "id",
+                    manifest: { model: { name: "name" } },
+                    name: "name",
+                },
+            ],
+            pagination: { limit: 1, next_page_token: "next_page_token", previous_page_token: "previous_page_token" },
+        };
+
+        server
+            .mockEndpoint({ once: false })
+            .get("/api/v1/agents")
+            .respondWith()
+            .statusCode(200)
+            .jsonBody(rawResponseBody)
+            .build();
+
+        const expected = {
+            data: [
+                {
+                    createdBySubject: {
+                        subjectDisplayName: "subject_display_name",
+                        subjectId: "subject_id",
+                        subjectType: "subject_type",
+                    },
+                    description: "description",
                     id: "id",
                     manifest: {
                         model: {
@@ -26,10 +52,34 @@ describe("AgentsClient", () => {
                     name: "name",
                 },
             ],
-        });
+            pagination: {
+                limit: 1,
+                nextPageToken: "next_page_token",
+                previousPageToken: "previous_page_token",
+            },
+        };
+        const page = await client.agents.list();
+
+        expect(expected.data).toEqual(page.data);
+        expect(page.hasNextPage()).toBe(true);
+        const nextPage = await page.getNextPage();
+        expect(expected.data).toEqual(nextPage.data);
     });
 
     test("list (2)", async () => {
+        const server = mockServerPool.createServer();
+        const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
+
+        const rawResponseBody = { error: { message: "message" } };
+
+        server.mockEndpoint().get("/api/v1/agents").respondWith().statusCode(400).jsonBody(rawResponseBody).build();
+
+        await expect(async () => {
+            return await client.agents.list();
+        }).rejects.toThrow(TrueForgeTypes.BadRequestError);
+    });
+
+    test("list (3)", async () => {
         const server = mockServerPool.createServer();
         const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
 
@@ -45,9 +95,15 @@ describe("AgentsClient", () => {
     test("create (1)", async () => {
         const server = mockServerPool.createServer();
         const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
-        const rawRequestBody = { manifest: { model: { name: "name" } }, name: "name" };
+        const rawRequestBody = { description: "description", manifest: { model: { name: "name" } }, name: "name" };
         const rawResponseBody = {
             data: {
+                created_by_subject: {
+                    subject_display_name: "subject_display_name",
+                    subject_id: "subject_id",
+                    subject_type: "subject_type",
+                },
+                description: "description",
                 id: "id",
                 manifest: {
                     instructions: "instructions",
@@ -71,6 +127,7 @@ describe("AgentsClient", () => {
             .build();
 
         const response = await client.agents.create({
+            description: "description",
             manifest: {
                 model: {
                     name: "name",
@@ -80,6 +137,12 @@ describe("AgentsClient", () => {
         });
         expect(response).toEqual({
             data: {
+                createdBySubject: {
+                    subjectDisplayName: "subject_display_name",
+                    subjectId: "subject_id",
+                    subjectType: "subject_type",
+                },
+                description: "description",
                 id: "id",
                 manifest: {
                     instructions: "instructions",
@@ -114,7 +177,7 @@ describe("AgentsClient", () => {
     test("create (2)", async () => {
         const server = mockServerPool.createServer();
         const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
-        const rawRequestBody = { manifest: { model: { name: "x" } }, name: "xy" };
+        const rawRequestBody = { description: "x", manifest: { model: { name: "x" } }, name: "xy" };
         const rawResponseBody = { error: { message: "message" } };
 
         server
@@ -128,6 +191,7 @@ describe("AgentsClient", () => {
 
         await expect(async () => {
             return await client.agents.create({
+                description: "x",
                 manifest: {
                     model: {
                         name: "x",
@@ -141,7 +205,7 @@ describe("AgentsClient", () => {
     test("create (3)", async () => {
         const server = mockServerPool.createServer();
         const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
-        const rawRequestBody = { manifest: { model: { name: "x" } }, name: "xy" };
+        const rawRequestBody = { description: "x", manifest: { model: { name: "x" } }, name: "xy" };
         const rawResponseBody = { error: { message: "message" } };
 
         server
@@ -155,6 +219,7 @@ describe("AgentsClient", () => {
 
         await expect(async () => {
             return await client.agents.create({
+                description: "x",
                 manifest: {
                     model: {
                         name: "x",
@@ -168,7 +233,7 @@ describe("AgentsClient", () => {
     test("create (4)", async () => {
         const server = mockServerPool.createServer();
         const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
-        const rawRequestBody = { manifest: { model: { name: "x" } }, name: "xy" };
+        const rawRequestBody = { description: "x", manifest: { model: { name: "x" } }, name: "xy" };
         const rawResponseBody = { error: { message: "message" } };
 
         server
@@ -182,6 +247,7 @@ describe("AgentsClient", () => {
 
         await expect(async () => {
             return await client.agents.create({
+                description: "x",
                 manifest: {
                     model: {
                         name: "x",
@@ -198,6 +264,12 @@ describe("AgentsClient", () => {
 
         const rawResponseBody = {
             data: {
+                created_by_subject: {
+                    subject_display_name: "subject_display_name",
+                    subject_id: "subject_id",
+                    subject_type: "subject_type",
+                },
+                description: "description",
                 id: "id",
                 manifest: {
                     instructions: "instructions",
@@ -222,6 +294,12 @@ describe("AgentsClient", () => {
         const response = await client.agents.get("agent_id");
         expect(response).toEqual({
             data: {
+                createdBySubject: {
+                    subjectDisplayName: "subject_display_name",
+                    subjectId: "subject_id",
+                    subjectType: "subject_type",
+                },
+                description: "description",
                 id: "id",
                 manifest: {
                     instructions: "instructions",
@@ -278,6 +356,12 @@ describe("AgentsClient", () => {
         const rawRequestBody = { manifest: { model: { name: "name" } } };
         const rawResponseBody = {
             data: {
+                created_by_subject: {
+                    subject_display_name: "subject_display_name",
+                    subject_id: "subject_id",
+                    subject_type: "subject_type",
+                },
+                description: "description",
                 id: "id",
                 manifest: {
                     instructions: "instructions",
@@ -309,6 +393,12 @@ describe("AgentsClient", () => {
         });
         expect(response).toEqual({
             data: {
+                createdBySubject: {
+                    subjectDisplayName: "subject_display_name",
+                    subjectId: "subject_id",
+                    subjectType: "subject_type",
+                },
+                description: "description",
                 id: "id",
                 manifest: {
                     instructions: "instructions",
@@ -453,5 +543,24 @@ describe("AgentsClient", () => {
         await expect(async () => {
             return await client.agents.delete("agent_id");
         }).rejects.toThrow(TrueForgeTypes.UnauthorizedError);
+    });
+
+    test("delete (3)", async () => {
+        const server = mockServerPool.createServer();
+        const client = new TrueForge({ maxRetries: 0, token: "test", baseUrl: server.baseUrl });
+
+        const rawResponseBody = { error: { message: "message" } };
+
+        server
+            .mockEndpoint()
+            .delete("/api/v1/agents/agent_id")
+            .respondWith()
+            .statusCode(404)
+            .jsonBody(rawResponseBody)
+            .build();
+
+        await expect(async () => {
+            return await client.agents.delete("agent_id");
+        }).rejects.toThrow(TrueForgeTypes.NotFoundError);
     });
 });

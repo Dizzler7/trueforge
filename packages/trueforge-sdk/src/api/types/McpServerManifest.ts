@@ -2,12 +2,4 @@
 
 import type * as TrueForge from "../index.js";
 
-export interface McpServerManifest {
-    auth?: TrueForge.McpServerManifestAuth;
-    /** Concise summary of what this MCP server provides. */
-    description: string;
-    name: TrueForge.ResourceName;
-    type: TrueForge.McpServerType;
-    /** URL of the remote MCP server. */
-    url: string;
-}
+export type McpServerManifest = TrueForge.RemoteMcpServerManifest | TrueForge.TrueFoundryMcpServerManifest;

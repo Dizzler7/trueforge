@@ -9,9 +9,12 @@ import {
   SessionStoreConflictError,
   SessionStoreNotFoundError,
   TurnResourceResolver,
+  type SessionHandle,
+  type TurnHandle,
   type TurnInputItem,
   type TurnRecordWithoutSnapshot,
 } from '@truefoundry/trueforge-core/agent-session';
+import type { IWebSearchProvider } from '@truefoundry/trueforge-core/core';
 import {
   AgentHarnessError,
   existingSandboxIdForProvider,
@@ -20,6 +23,7 @@ import {
   isFileContentPart,
   McpConnectionError,
   rawSandboxId,
+  redisKey,
   SandboxError,
   VercelAILLM,
 } from '@truefoundry/trueforge-core/core';
@@ -27,14 +31,14 @@ import type { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { streamSSE } from 'hono/streaming';
 import type { Logger } from 'winston';
-import type { ResolveUserContext, UserContext } from '../auth/identity';
-import configuration from '../config';
-import type { IAgentStore } from '../db/agentStore';
-import type { IMcpServerStore } from '../db/mcpServerStore';
+import type { Authorizer } from '../auth/authorizer';
+import type { ResolveRequestContext } from '../auth/identity';
+import configuration, { isTrueFoundryModeEnabled } from '../config';
+import type { AgentRecord, IAgentStore } from '../db/agentStore';
+import type { IMcpServerWithAuthStore } from '../db/mcpServerStore';
 import type { IModelProviderStore } from '../db/modelProviderStore';
 import type { ISandboxProviderStore } from '../db/sandboxProviderStore';
 import type { ISkillStore } from '../db/skillStore';
-import type { IOAuthTokenStore } from '../mcp/auth/types';
 import {
   createAndExecuteTurnRoute,
   downloadSandboxFileRoute,
@@ -45,17 +49,23 @@ import {
 } from '../routes/turnRoutes';
 import type { ActiveTurnRegistry } from '../runtime/activeTurns';
 import { StreamGoneError, type EventSubscription, type EventSubscriptionRegistry } from '../runtime/event-subscription';
-import { mintPeeredTurnId } from '../runtime/peeringIds';
 import { validateSandboxFilePath } from '../runtime/sandboxFilePath';
 import {
   buildTurnSandbox,
+  gatewayMetadataHeaders,
   getMcpConnection,
   getModelDetails,
-  resolveGitSkills,
+  mergeGatewayMetadata,
+  parseGatewayMetadataHeader,
   resolveSandboxProvider,
+  withGatewayMetadataHeaders,
+  X_TFY_METADATA,
 } from '../runtime/sessionResources';
 import { checkSnapshotStatus } from '../sandbox/providerUtils';
-import { TENANT_ID } from './sessions';
+import { MAX_SESSION_TITLE_LENGTH } from '../schemas/session';
+import { newId } from '../utils/id';
+import { resolveWebSearchProvider } from '../websearch/providers';
+import { canReadAgentBoundResource } from './agentAccess';
 
 export function toWireTurn(record: TurnRecordWithoutSnapshot): Turn {
   return {
@@ -103,70 +113,94 @@ export interface TurnsRouterDeps {
   sessions: Sessions;
   sessionStore: ISessionStore;
   activeTurns: ActiveTurnRegistry;
-  modelProviderStore: IModelProviderStore;
-  mcpServerStore: IMcpServerStore;
-  tokenStore: IOAuthTokenStore;
-  skillStore: ISkillStore;
-  agentStore: IAgentStore;
+  resolveModelProviderStore: (c: Context, runAsAgent?: AgentRecord) => IModelProviderStore;
+  resolveMcpServerStore: (c: Context, runAsAgent?: AgentRecord) => IMcpServerWithAuthStore;
+  resolveSkillStore: (c: Context) => ISkillStore;
+  resolveAgentStore: (c: Context) => IAgentStore;
   /** Resumable live turn-event transport: create-turn writes, subscribe polls. */
   eventSubscriptions: EventSubscriptionRegistry<TurnStreamingEvent>;
-  sandboxProviderStore: ISandboxProviderStore;
+  resolveSandboxProviderStore: (c: Context) => ISandboxProviderStore;
   logger: Logger;
-  resolveUserContext: ResolveUserContext;
+  resolveRequestContext: ResolveRequestContext;
+  authorizer: Authorizer;
 }
+
+/**
+ * Deps needed to create a turn and drain events in-process (no HTTP). Carries already-resolved
+ * stores; callers must resolve them from the request context (e.g. schedule `resolveTurnDeps(c, agent)`)
+ * so TrueFoundry mode stays token-bound for models, MCP, and skills.
+ */
+export type BeginTurnExecutionDeps = Pick<TurnsRouterDeps, 'activeTurns' | 'eventSubscriptions' | 'logger'> & {
+  agentStore: IAgentStore;
+  modelProviderStore: IModelProviderStore;
+  mcpServerStore: IMcpServerWithAuthStore;
+  sandboxProviderStore: ISandboxProviderStore;
+  skillStore: Pick<ISkillStore, 'resolveTurnSkills'>;
+};
 
 /**
  * Builds the per-turn resolver. Agent / MCP / sandbox / LLM lookups are wired
  * the same way: async factories over the corresponding stores.
  */
 function createTurnResolver(deps: {
-  mcpServerStore: IMcpServerStore;
-  tokenStore: IOAuthTokenStore;
-  skillStore: ISkillStore;
+  mcpServerStore: IMcpServerWithAuthStore;
+  skillStore: Pick<ISkillStore, 'resolveTurnSkills'>;
   sandboxProviderStore: ISandboxProviderStore;
   agentStore: IAgentStore;
   modelProviderStore: IModelProviderStore;
+  webSearchProvider: IWebSearchProvider | undefined;
   logger: Logger;
   signal: AbortSignal;
   userRef: string;
-  sessionId: string;
+  session: SessionHandle;
+  turnId: string;
+  tfyMetadata: Record<string, string> | undefined;
 }): TurnResourceResolver {
   const {
     mcpServerStore,
-    tokenStore,
     skillStore,
     sandboxProviderStore,
     agentStore,
     modelProviderStore,
+    webSearchProvider,
     logger,
     signal,
     userRef,
-    sessionId,
+    session,
+    turnId,
+    tfyMetadata,
   } = deps;
+  const tenant_id = session.tenant_id;
+  const sessionId = session.session_id;
+  const metadataHeaders = isTrueFoundryModeEnabled()
+    ? gatewayMetadataHeaders(mergeGatewayMetadata({ session, turnId, tfyMetadata }))
+    : {};
+
   return new TurnResourceResolver({
     llm: async name => {
-      const { providerConfig, defaultModelParams, modelProperties } = await getModelDetails({
-        tenant_id: TENANT_ID,
+      const resolved = await getModelDetails({
+        tenant_id,
         name,
         store: modelProviderStore,
       });
       return {
         modelClient: new VercelAILLM({
-          providerConfig,
+          providerConfig: {
+            ...resolved.providerConfig,
+            headers: { ...resolved.providerConfig.headers, ...metadataHeaders },
+          },
           logger,
           signal,
         }),
-        defaultModelParams,
-        modelProperties,
+        defaultModelParams: resolved.defaultModelParams,
+        modelProperties: resolved.modelProperties,
       };
     },
     mcp: async name => {
       const connection = await getMcpConnection({
-        tenant_id: TENANT_ID,
+        tenant_id,
         name,
         store: mcpServerStore,
-        tokenStore,
-        clientName: configuration.MCP_DCR_OAUTH_CLIENT_NAME,
         userRef,
       });
       if (connection === undefined) {
@@ -174,13 +208,20 @@ function createTurnResolver(deps: {
           message: `Unknown MCP server "${name}" — not configured`,
         });
       }
-      return connection;
+      return {
+        url: connection.url,
+        headers: withGatewayMetadataHeaders({
+          headers: connection.headers,
+          metadataHeaders,
+        }),
+      };
     },
     mcpRequestTimeoutMs: configuration.MCP_REQUEST_TIMEOUT_MS,
     mcpConnectTimeoutMs: configuration.MCP_CONNECT_TIMEOUT_MS,
+    mcpMaxResponseBytes: configuration.MCP_TOOL_CALL_MAX_RESPONSE_BYTES,
     sandboxProvider: async ({ spec, existingSandboxId, tracing }) => {
       const provider = await resolveSandboxProvider({
-        tenant_id: TENANT_ID,
+        tenant_id,
         store: sandboxProviderStore,
         logger,
         sessionId,
@@ -198,7 +239,7 @@ function createTurnResolver(deps: {
       // Restoring an existing sandbox goes through daytona.get and never touches the snapshot.
       // Local fallback has no image build.
       if (carriedSandboxId === undefined && provider.type !== 'local') {
-        const status = await checkSnapshotStatus({ store: sandboxProviderStore, tenant_id: TENANT_ID, logger });
+        const status = await checkSnapshotStatus({ store: sandboxProviderStore, tenant_id, logger });
         if (status?.status !== 'ready') {
           throw new HTTPException(422, {
             message:
@@ -208,32 +249,34 @@ function createTurnResolver(deps: {
           });
         }
       }
-      const gitSkills = await resolveGitSkills({
-        tenant_id: TENANT_ID,
-        skills: spec.skills ?? [],
-        store: skillStore,
-      });
+      const skills = spec.skills ?? [];
+      const mountSkills =
+        skills.length === 0
+          ? []
+          : await skillStore.resolveTurnSkills({
+              tenant_id,
+              skills,
+            });
       return buildTurnSandbox({
         provider,
         logger,
-        gitSkills,
+        skills: mountSkills,
         fileDownloadEnabled: spec.config.sandbox.file_downloads,
         existingSandboxId: carriedSandboxId,
         tracing,
       });
     },
     agent: async agentId => {
-      const record = await agentStore.getAgent({ tenant_id: TENANT_ID, id: agentId });
+      const record = await agentStore.getAgent({ tenant_id, id: agentId });
       if (record === undefined) {
         throw new HTTPException(422, { message: `Agent not found: ${agentId}` });
       }
       return record.manifest;
     },
+    webSearchProvider,
     logger,
   });
 }
-
-const MAX_SESSION_TITLE_LENGTH = 50;
 
 /**
  * Derives a session title from the first user message of the first turn. Returns the
@@ -289,7 +332,7 @@ export function streamTTLSecondsFor(event: TurnStreamingEvent): number | undefin
 
 /** Redis/in-memory key for one turn's resumable event stream. */
 export function turnStreamId(tenantId: string, sessionId: string, turnId: string): string {
-  return `agent:turn:${tenantId}:${sessionId}:${turnId}:stream`;
+  return redisKey('agent', 'turn', tenantId, sessionId, turnId, 'stream');
 }
 
 /**
@@ -334,6 +377,158 @@ export async function drainTurnEvents(input: {
   }
 }
 
+/** Inputs for {@link drainTurnEvents} produced by {@link beginTurnExecution}. */
+export interface TurnEventDrainInput {
+  trackedStream: AsyncIterable<TurnStreamingEvent>;
+  turnEventStream: EventSubscription<TurnStreamingEvent>;
+  sessionId: string;
+  turnId: string;
+  maxExecutionTimer: NodeJS.Timeout;
+  logger: Logger;
+}
+
+/**
+ * Shared create-turn engine: persist the turn, start execution, and return the
+ * drain inputs. Does not wait for events and does not write HTTP/SSE.
+ */
+export async function beginTurnExecution(params: {
+  session: SessionHandle;
+  input: TurnInputItem[] | undefined;
+  previous_turn_id: string | undefined;
+  userRef: string;
+  tfyMetadata?: Record<string, string> | undefined;
+  deps: BeginTurnExecutionDeps;
+}): Promise<{ turn: TurnHandle; drainInput: TurnEventDrainInput }> {
+  const { session, input, previous_turn_id: previousTurnId, userRef, tfyMetadata, deps } = params;
+  const sessionId = session.session_id;
+  const turnId = newId();
+
+  const abortController = new AbortController();
+  const tenant_id = session.tenant_id;
+  const resolver = createTurnResolver({
+    mcpServerStore: deps.mcpServerStore,
+    skillStore: deps.skillStore,
+    sandboxProviderStore: deps.sandboxProviderStore,
+    agentStore: deps.agentStore,
+    modelProviderStore: deps.modelProviderStore,
+    webSearchProvider: resolveWebSearchProvider(),
+    logger: deps.logger,
+    signal: abortController.signal,
+    userRef,
+    session,
+    turnId,
+    tfyMetadata,
+  });
+
+  // First turn only: derive the title from the first user message. The store
+  // never overwrites an existing title.
+  const title = session.record.last_turn_id ? undefined : deriveSessionTitle(input);
+
+  const turn = await session.createTurn({
+    turn_id: turnId,
+    active_executor_id: configuration.EXECUTOR_ID,
+    input,
+    previous_turn_id: previousTurnId,
+    signal: abortController.signal,
+    resolver,
+    update_session_title_if_not_exist: title,
+  });
+
+  const maxExecutionTimer = setTimeout(() => {
+    if (!abortController.signal.aborted) {
+      abortController.abort(CancellationReason.ServerExecutionTimeout);
+    }
+  }, configuration.SERVER_EXECUTION_TIMEOUT_SECONDS * 1000);
+  maxExecutionTimer.unref();
+
+  const trackedStream = deps.activeTurns.track({
+    sessionId,
+    turnId: turn.id,
+    abortController,
+    stream: turn.stream(),
+  });
+
+  // Held for the whole turn; the stream's sequence counter dies with it.
+  const turnEventStream = deps.eventSubscriptions.get(turnStreamId(tenant_id, sessionId, turn.id));
+
+  return {
+    turn,
+    drainInput: {
+      trackedStream,
+      turnEventStream,
+      sessionId,
+      turnId: turn.id,
+      maxExecutionTimer,
+      logger: deps.logger,
+    },
+  };
+}
+
+/**
+ * Non-stream create-turn: begin execution and resolve once the first event is
+ * dual-written so immediate subscribe cannot 412. Same as `stream: false`.
+ */
+export async function startTurnInProcess(params: {
+  session: SessionHandle;
+  input: TurnInputItem[] | undefined;
+  previous_turn_id: string | undefined;
+  userRef: string;
+  tfyMetadata?: Record<string, string> | undefined;
+  deps: BeginTurnExecutionDeps;
+}): Promise<TurnHandle> {
+  const { turn, drainInput } = await beginTurnExecution(params);
+
+  // Same unawaited drain scheduling as Hono streamSSE's run(cb).
+  const { promise: firstEventDualWritten, resolve: markFirstEventDualWritten } = Promise.withResolvers<undefined>();
+  void drainTurnEvents({
+    ...drainInput,
+    onEvent: () => {
+      markFirstEventDualWritten(undefined);
+      return Promise.resolve();
+    },
+  }).finally(() => {
+    markFirstEventDualWritten(undefined);
+  });
+  await firstEventDualWritten;
+  return turn;
+}
+
+/** Mapped client error from turn execution; undefined means rethrow. */
+export interface TurnExecutionError {
+  status: 400 | 404 | 422;
+  message: string;
+}
+
+/**
+ * Resolve turn-start failures to HTTP status + message.
+ * Returns undefined when the caller should rethrow (unexpected / 5xx).
+ */
+export function getTurnExecutionError(error: unknown): TurnExecutionError | undefined {
+  if (error instanceof HTTPException) {
+    if (error.status === 400 || error.status === 404 || error.status === 422) {
+      return { status: error.status, message: error.message };
+    }
+    return undefined;
+  }
+  if (error instanceof SessionStoreNotFoundError) {
+    return { status: 404, message: error.message };
+  }
+  if (error instanceof AgentHarnessError && !(error instanceof McpConnectionError)) {
+    switch (error.code) {
+      case 'invalid_file_input':
+        return { status: 400, message: error.message };
+      case 'invalid_send_input':
+      case 'agent_sandbox_required':
+      case 'tool_name_collision':
+        return { status: 422, message: error.message };
+      case 'capability_state_error':
+      case 'mcp_connection_failed':
+        return undefined;
+    }
+  }
+  return undefined;
+}
+
 /**
  * Resume cursor: `Last-Event-ID` header wins over the body value because the
  * header is updated by the SDK on every reconnect to reflect the last delivered
@@ -352,9 +547,15 @@ export function resolveAfterSequenceNumber(c: Context, bodyAfterSequenceNumber?:
   return bodyAfterSequenceNumber;
 }
 
-/** True when `user` is the session creator (`created_by`). */
-function checkTurnAccess(user: UserContext, createdBy: string): boolean {
-  return createdBy === user.userRef;
+/** True when the subject is the session creator (`created_by_subject.subject_id`). */
+function isSessionOwner({
+  subject_id,
+  created_by_subject,
+}: {
+  subject_id: string;
+  created_by_subject: { subject_id: string };
+}): boolean {
+  return created_by_subject.subject_id === subject_id;
 }
 
 const FORBIDDEN_SESSION_ACCESS = 'Only the session creator can access this session';
@@ -365,11 +566,23 @@ export function createTurnsRouter(deps: TurnsRouterDeps) {
   const listTurnsHandler: RouteHandler<typeof listTurnsRoute> = async c => {
     const { session_id: sessionId } = c.req.valid('param');
     const query = c.req.valid('query');
-    const session = await deps.sessions.get({ tenant_id: TENANT_ID, session_id: sessionId });
+    const requestContext = deps.resolveRequestContext(c);
+    const session = await deps.sessions.get({
+      tenant_id: requestContext.tenant_id,
+      session_id: sessionId,
+    });
     if (!session) {
       return c.json({ error: { message: `Session not found: ${sessionId}` } }, 404);
     }
-    if (!checkTurnAccess(deps.resolveUserContext(c), session.record.created_by)) {
+    if (
+      !(await canReadAgentBoundResource({
+        store: deps.resolveAgentStore(c),
+        context: requestContext,
+        authorizer: deps.authorizer,
+        agent_id: session.record.agent.type === 'reference' ? session.record.agent.id : undefined,
+        created_by_subject_id: session.record.created_by_subject.subject_id,
+      }))
+    ) {
       return c.json({ error: { message: FORBIDDEN_SESSION_ACCESS } }, 403);
     }
     try {
@@ -388,11 +601,23 @@ export function createTurnsRouter(deps: TurnsRouterDeps) {
 
   const getTurnHandler: RouteHandler<typeof getTurnRoute> = async c => {
     const { session_id: sessionId, turn_id: turnId } = c.req.valid('param');
-    const session = await deps.sessions.get({ tenant_id: TENANT_ID, session_id: sessionId });
+    const requestContext = deps.resolveRequestContext(c);
+    const session = await deps.sessions.get({
+      tenant_id: requestContext.tenant_id,
+      session_id: sessionId,
+    });
     if (!session) {
       return c.json({ error: { message: `Session not found: ${sessionId}` } }, 404);
     }
-    if (!checkTurnAccess(deps.resolveUserContext(c), session.record.created_by)) {
+    if (
+      !(await canReadAgentBoundResource({
+        store: deps.resolveAgentStore(c),
+        context: requestContext,
+        authorizer: deps.authorizer,
+        agent_id: session.record.agent.type === 'reference' ? session.record.agent.id : undefined,
+        created_by_subject_id: session.record.created_by_subject.subject_id,
+      }))
+    ) {
       return c.json({ error: { message: FORBIDDEN_SESSION_ACCESS } }, 403);
     }
     const turn = await session.getTurn(turnId);
@@ -411,11 +636,20 @@ export function createTurnsRouter(deps: TurnsRouterDeps) {
       // Cheapest first: a malformed path costs no store read and no provider round-trip.
       validateSandboxFilePath(path);
 
-      const session = await deps.sessions.get({ tenant_id: TENANT_ID, session_id: sessionId });
+      const requestContext = deps.resolveRequestContext(c);
+      const session = await deps.sessions.get({
+        tenant_id: requestContext.tenant_id,
+        session_id: sessionId,
+      });
       if (!session) {
         return c.json({ error: { message: `Session not found: ${sessionId}` } }, 404);
       }
-      if (!checkTurnAccess(deps.resolveUserContext(c), session.record.created_by)) {
+      if (
+        !isSessionOwner({
+          subject_id: requestContext.subject.id,
+          created_by_subject: session.record.created_by_subject,
+        })
+      ) {
         return c.json({ error: { message: FORBIDDEN_SESSION_ACCESS } }, 403);
       }
 
@@ -431,8 +665,8 @@ export function createTurnsRouter(deps: TurnsRouterDeps) {
       }
 
       const provider = await resolveSandboxProvider({
-        tenant_id: TENANT_ID,
-        store: deps.sandboxProviderStore,
+        tenant_id: requestContext.tenant_id,
+        store: deps.resolveSandboxProviderStore(c),
         logger: deps.logger,
         sessionId,
       });
@@ -467,11 +701,23 @@ export function createTurnsRouter(deps: TurnsRouterDeps) {
   const listTurnEventsHandler: RouteHandler<typeof listTurnEventsRoute> = async c => {
     const { session_id: sessionId, turn_id: turnId } = c.req.valid('param');
     const query = c.req.valid('query');
-    const session = await deps.sessions.get({ tenant_id: TENANT_ID, session_id: sessionId });
+    const requestContext = deps.resolveRequestContext(c);
+    const session = await deps.sessions.get({
+      tenant_id: requestContext.tenant_id,
+      session_id: sessionId,
+    });
     if (!session) {
       return c.json({ error: { message: `Session not found: ${sessionId}` } }, 404);
     }
-    if (!checkTurnAccess(deps.resolveUserContext(c), session.record.created_by)) {
+    if (
+      !(await canReadAgentBoundResource({
+        store: deps.resolveAgentStore(c),
+        context: requestContext,
+        authorizer: deps.authorizer,
+        agent_id: session.record.agent.type === 'reference' ? session.record.agent.id : undefined,
+        created_by_subject_id: session.record.created_by_subject.subject_id,
+      }))
+    ) {
       return c.json({ error: { message: FORBIDDEN_SESSION_ACCESS } }, 403);
     }
     const turn = await session.getTurn(turnId);
@@ -496,138 +742,124 @@ export function createTurnsRouter(deps: TurnsRouterDeps) {
   const createAndExecuteTurnHandler: RouteHandler<typeof createAndExecuteTurnRoute> = async c => {
     const { session_id: sessionId } = c.req.valid('param');
     const body = c.req.valid('json');
+    const requestContext = deps.resolveRequestContext(c);
 
-    const session = await deps.sessions.get({ tenant_id: TENANT_ID, session_id: sessionId });
+    const session = await deps.sessions.get({
+      tenant_id: requestContext.tenant_id,
+      session_id: sessionId,
+    });
     if (!session) {
       return c.json({ error: { message: `Session not found: ${sessionId}` } }, 404);
     }
-    if (!checkTurnAccess(deps.resolveUserContext(c), session.record.created_by)) {
+    if (
+      !isSessionOwner({
+        subject_id: requestContext.subject.id,
+        created_by_subject: session.record.created_by_subject,
+      })
+    ) {
       return c.json({ error: { message: FORBIDDEN_CREATE_TURN } }, 403);
     }
 
-    const abortController = new AbortController();
-    const resolver = createTurnResolver({
-      mcpServerStore: deps.mcpServerStore,
-      tokenStore: deps.tokenStore,
-      skillStore: deps.skillStore,
-      sandboxProviderStore: deps.sandboxProviderStore,
-      agentStore: deps.agentStore,
-      modelProviderStore: deps.modelProviderStore,
-      logger: deps.logger,
-      signal: abortController.signal,
-      userRef: deps.resolveUserContext(c).userRef,
-      sessionId,
-    });
+    let referencedAgent: AgentRecord | undefined;
+    if (session.record.agent.type === 'reference') {
+      const agentId = session.record.agent.id;
+      const agent = await deps.resolveAgentStore(c).getAgent({
+        tenant_id: requestContext.tenant_id,
+        id: agentId,
+      });
+      if (agent === undefined) {
+        return c.json({ error: { message: `Agent not found: ${agentId}` } }, 422);
+      }
+      const canUseAgent = await deps.authorizer.canAccessAgent({
+        context: requestContext,
+        action: 'use',
+        agent,
+      });
+      if (!canUseAgent) {
+        return c.json({ error: { message: `Agent not found: ${agentId}` } }, 404);
+      }
+      referencedAgent = agent;
+    }
 
-    // First turn only: derive the title from the first user message. The store
-    // never overwrites an existing title.
-    const title = session.record.last_turn_id ? undefined : deriveSessionTitle(body.input);
+    const rawTfyMetadata = c.req.header(X_TFY_METADATA);
+    const tfyMetadata = rawTfyMetadata === undefined ? undefined : parseGatewayMetadataHeader(rawTfyMetadata);
 
-    let turn;
+    const turnParams = {
+      session,
+      input: body.input,
+      previous_turn_id: body.previous_turn_id,
+      userRef: requestContext.subject.id,
+      tfyMetadata,
+      deps: {
+        ...deps,
+        modelProviderStore: deps.resolveModelProviderStore(c, referencedAgent),
+        mcpServerStore: deps.resolveMcpServerStore(c, referencedAgent),
+        skillStore: deps.resolveSkillStore(c),
+        agentStore: deps.resolveAgentStore(c),
+        sandboxProviderStore: deps.resolveSandboxProviderStore(c),
+      },
+    };
+
     try {
-      turn = await session.createTurn({
-        turn_id: mintPeeredTurnId(configuration.EXECUTOR_ID),
-        input: body.input,
-        previous_turn_id: body.previous_turn_id,
-        signal: abortController.signal,
-        resolver,
-        update_session_title_if_not_exist: title,
+      // Non-stream: wait for first dual-write, return JSON (also used by schedule run-now).
+      if (!body.stream) {
+        const turn = await startTurnInProcess(turnParams);
+        return c.json({ data: toWireTurn(turn.record) }, 200);
+      }
+
+      // Stream: same engine; HTTP handler owns writing each event to SSE.
+      const { drainInput } = await beginTurnExecution(turnParams);
+      let shouldWriteToSSEStream = true;
+      return streamSSE(c, async stream => {
+        stream.onAbort(() => {
+          shouldWriteToSSEStream = false;
+        });
+        await drainTurnEvents({
+          ...drainInput,
+          onEvent: async (event, sequenceNumber) => {
+            if (!stream.closed && !stream.aborted && shouldWriteToSSEStream) {
+              try {
+                await stream.writeSSE(turnEventSsePayload(event, sequenceNumber));
+              } catch (error) {
+                deps.logger.error('SSE stream write error', extractErrorLogFields(error));
+                shouldWriteToSSEStream = false;
+              }
+            }
+          },
+        });
+        await stream.close();
       });
     } catch (error) {
-      if (error instanceof SessionStoreNotFoundError) {
-        return c.json({ error: { message: error.message } }, 404);
-      }
-      if (error instanceof AgentHarnessError && !(error instanceof McpConnectionError)) {
-        switch (error.code) {
-          case 'invalid_file_input':
-            return c.json({ error: { message: error.message } }, 400);
-          case 'invalid_send_input':
-          case 'agent_sandbox_required':
-          case 'tool_name_collision':
-            return c.json({ error: { message: error.message } }, 422);
-          case 'capability_state_error':
-          case 'mcp_connection_failed':
-            throw error;
-        }
+      const turnError = getTurnExecutionError(error);
+      if (turnError) {
+        return c.json({ error: { message: turnError.message } }, turnError.status);
       }
       throw error;
     }
-
-    const maxExecutionTimer = setTimeout(() => {
-      if (!abortController.signal.aborted) {
-        abortController.abort(CancellationReason.ServerExecutionTimeout);
-      }
-    }, configuration.SERVER_EXECUTION_TIMEOUT_SECONDS * 1000);
-    maxExecutionTimer.unref();
-
-    const trackedStream = deps.activeTurns.track({
-      sessionId,
-      turnId: turn.id,
-      abortController,
-      stream: turn.stream(),
-    });
-
-    // Held for the whole turn; the stream's sequence counter dies with it.
-    const turnEventStream = deps.eventSubscriptions.get(turnStreamId(TENANT_ID, sessionId, turn.id));
-    const drainInput = {
-      trackedStream,
-      turnEventStream,
-      sessionId,
-      turnId: turn.id,
-      maxExecutionTimer,
-      logger: deps.logger,
-    };
-
-    // Non-stream: same unawaited drain scheduling as Hono streamSSE's run(cb).
-    // Wait until the first dual-write (turn.created) so immediate subscribeToTurn
-    // cannot 412 before the resumable stream exists.
-    if (!body.stream) {
-      const { promise: firstEventDualWritten, resolve: markFirstEventDualWritten } = Promise.withResolvers<undefined>();
-      void drainTurnEvents({
-        ...drainInput,
-        onEvent: () => {
-          markFirstEventDualWritten(undefined);
-          return Promise.resolve();
-        },
-      }).finally(() => {
-        markFirstEventDualWritten(undefined);
-      });
-      await firstEventDualWritten;
-      return c.json({ data: toWireTurn(turn.record) }, 200);
-    }
-
-    let shouldWriteToSSEStream = true;
-    return streamSSE(c, async stream => {
-      stream.onAbort(() => {
-        shouldWriteToSSEStream = false;
-      });
-      await drainTurnEvents({
-        ...drainInput,
-        onEvent: async (event, sequenceNumber) => {
-          if (!stream.closed && !stream.aborted && shouldWriteToSSEStream) {
-            try {
-              await stream.writeSSE(turnEventSsePayload(event, sequenceNumber));
-            } catch (error) {
-              deps.logger.error('SSE stream write error', extractErrorLogFields(error));
-              shouldWriteToSSEStream = false;
-            }
-          }
-        },
-      });
-      await stream.close();
-    });
   };
 
   const subscribeTurnHandler: RouteHandler<typeof subscribeTurnRoute> = async c => {
     const { session_id: sessionId, turn_id: turnId } = c.req.valid('param');
     const query = c.req.valid('query');
     const afterSequenceNumber = resolveAfterSequenceNumber(c, query.after_sequence_number);
+    const requestContext = deps.resolveRequestContext(c);
 
-    const session = await deps.sessions.get({ tenant_id: TENANT_ID, session_id: sessionId });
+    const session = await deps.sessions.get({
+      tenant_id: requestContext.tenant_id,
+      session_id: sessionId,
+    });
     if (!session) {
       return c.json({ error: { message: `Session not found: ${sessionId}` } }, 404);
     }
-    if (!checkTurnAccess(deps.resolveUserContext(c), session.record.created_by)) {
+    if (
+      !(await canReadAgentBoundResource({
+        store: deps.resolveAgentStore(c),
+        context: requestContext,
+        authorizer: deps.authorizer,
+        agent_id: session.record.agent.type === 'reference' ? session.record.agent.id : undefined,
+        created_by_subject_id: session.record.created_by_subject.subject_id,
+      }))
+    ) {
       return c.json({ error: { message: FORBIDDEN_SESSION_ACCESS } }, 403);
     }
     const turn = await session.getTurn(turnId);
@@ -635,7 +867,7 @@ export function createTurnsRouter(deps: TurnsRouterDeps) {
       return c.json({ error: { message: `Turn not found: ${turnId}` } }, 404);
     }
 
-    const turnEventStream = deps.eventSubscriptions.get(turnStreamId(TENANT_ID, sessionId, turnId));
+    const turnEventStream = deps.eventSubscriptions.get(turnStreamId(requestContext.tenant_id, sessionId, turnId));
 
     // Admission check before SSE headers are sent, so it can still map to HTTP 412.
     try {

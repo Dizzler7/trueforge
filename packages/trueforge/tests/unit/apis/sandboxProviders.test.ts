@@ -1,6 +1,6 @@
-// Stub the Daytona-touching helpers so the router never talks to Daytona: the PUT path builds via
-// toSandboxProvider, and the GET path refreshes via checkSnapshotStatus. isDaytonaAuthError
-// and toSandboxStatus stay real so the auth-error mapping and PUT wire shape are exercised.
+// toSandboxProvider, and the GET path refreshes via checkSnapshotStatus. isDaytonaAuthError,
+// isDaytonaPermissionError and toSandboxStatus stay real so the error mapping and PUT wire shape are
+// exercised.
 jest.mock('../../../src/sandbox/providerUtils', () => {
   const actual = jest.requireActual('../../../src/sandbox/providerUtils');
   return { ...actual, toSandboxProvider: jest.fn(), checkSnapshotStatus: jest.fn() };
@@ -11,7 +11,7 @@ import type { SandboxBuild } from '@truefoundry/trueforge-core/core';
 import { createLogger } from 'winston';
 import { createCatalogRouter } from '../../../src/apis/catalog';
 import { createSandboxProvidersRouter } from '../../../src/apis/sandboxProviders';
-import { TENANT_ID } from '../../../src/apis/sessions';
+import { STANDALONE_REQUEST_CONTEXT } from '../../../src/auth/identity';
 import { McpCatalog } from '../../../src/catalog/McpCatalog';
 import { ModelCatalog } from '../../../src/catalog/ModelCatalog';
 import { SandboxCatalog } from '../../../src/catalog/SandboxCatalog';
@@ -85,9 +85,10 @@ async function createRouters(): Promise<{
   const sandboxProviderStore = new SqliteSandboxProviderStore(db);
   return {
     settingsRouter: createSandboxProvidersRouter({
-      sandboxProviderStore,
+      resolveSandboxProviderStore: () => sandboxProviderStore,
       withTransaction: callback => db.transaction().execute(callback),
       logger: silentLogger,
+      resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
     }),
     sandboxProviderStore,
   };
@@ -111,9 +112,10 @@ describe('sandboxProviders router', () => {
     await migrateSqliteToLatest(db);
     sandboxProviderStore = new SqliteSandboxProviderStore(db);
     settingsRouter = createSandboxProvidersRouter({
-      sandboxProviderStore,
+      resolveSandboxProviderStore: () => sandboxProviderStore,
       withTransaction: callback => db.transaction().execute(callback),
       logger: silentLogger,
+      resolveRequestContext: () => STANDALONE_REQUEST_CONTEXT,
     });
     catalogRouter = createCatalogRouter({
       modelCatalog: ModelCatalog.load(),
@@ -135,6 +137,27 @@ describe('sandboxProviders router', () => {
     expect(await response.json()).toEqual({ error: { message: 'No sandbox provider configured' } });
   });
 
+  it('GET / returns 404 when only an env-managed truefoundry provider exists', async () => {
+    const { settingsRouter: router, sandboxProviderStore: store } = await createRouters();
+    await store.upsertSandboxProvider({
+      tenant_id: 'default',
+      manifest: {
+        type: 'truefoundry',
+        server_url: 'http://sandbox-server',
+        nats_bridge_url: 'ws://nats-bridge',
+        exec_timeout_ms: 60_000,
+      },
+      status: 'ready',
+      status_reason: null,
+      build_metadata: null,
+    });
+
+    const response = await router.request('/');
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: { message: 'No sandbox provider configured' } });
+    expect(mockCheckStatus).not.toHaveBeenCalled();
+  });
+
   it('PUT builds the image + upserts, GET returns redacted auth plus live image status', async () => {
     const put = await settingsRouter.request('/', putInit(putBody));
     expect(put.status).toBe(200);
@@ -144,7 +167,7 @@ describe('sandboxProviders router', () => {
     expect(get.status).toBe(200);
     expect(await get.json()).toEqual({ data: putBodyWire });
 
-    const stored = await sandboxProviderStore.getSandboxProvider(TENANT_ID);
+    const stored = await sandboxProviderStore.getSandboxProvider('default');
     expect(stored?.manifest).toEqual(putBody);
   });
 
@@ -163,6 +186,20 @@ describe('sandboxProviders router', () => {
     );
     const response = await settingsRouter.request('/', putInit(putBody));
     expect(response.status).toBe(422);
+  });
+
+  it('PUT returns 422 naming the permissions when the key cannot register snapshots', async () => {
+    mockProviderFactory.mockReturnValue(
+      stubProvider({ buildImage: jest.fn().mockRejectedValue(new DaytonaError('Access denied', 403)) }),
+    );
+    const response = await settingsRouter.request('/', putInit(putBody));
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual({
+      error: {
+        message:
+          'Daytona denied access: the API key is missing required permissions. Grant write:sandboxes, write:snapshots, and delete:snapshots on the key in the Daytona dashboard, then try again.',
+      },
+    });
   });
 
   it('PUT does not persist config when the build call fails auth', async () => {
@@ -214,7 +251,7 @@ describe('sandbox-provider secret redaction and strict PUT', () => {
     expect(update.status).toBe(200);
     expect(await update.json()).toEqual({ data: wireResponse(redactedKeep) });
 
-    const stored = await sandboxProviderStore.getSandboxProvider(TENANT_ID);
+    const stored = await sandboxProviderStore.getSandboxProvider('default');
     expect(stored?.manifest).toEqual({ ...putBody, exec_timeout_ms: 120000 });
   });
 
@@ -232,7 +269,7 @@ describe('sandbox-provider secret redaction and strict PUT', () => {
       data: wireResponse({ ...keep, auth: { api_key: toRedactedSecretValue(putBody.auth.api_key) } }),
     });
 
-    const stored = await sandboxProviderStore.getSandboxProvider(TENANT_ID);
+    const stored = await sandboxProviderStore.getSandboxProvider('default');
     expect(stored?.manifest).toEqual(putBody);
   });
 
@@ -248,12 +285,11 @@ describe('sandbox-provider secret redaction and strict PUT', () => {
       data: wireResponse({ ...rotated, auth: { api_key: toRedactedSecretValue(rotatedKey) } }),
     });
 
-    const stored = await sandboxProviderStore.getSandboxProvider(TENANT_ID);
-    // The manifest is a discriminated union now and only daytona carries auth.
-    if (stored?.manifest.type !== 'daytona') {
-      throw new Error('expected a stored daytona manifest');
+    const stored = await sandboxProviderStore.getSandboxProvider('default');
+    expect(stored?.manifest.type).toBe('daytona');
+    if (stored?.manifest.type === 'daytona') {
+      expect(stored.manifest.auth.api_key).toBe(rotatedKey);
     }
-    expect(stored.manifest.auth.api_key).toBe(rotatedKey);
   });
 
   it('PUT update reuses persisted build_metadata (no image upgrade on re-save)', async () => {

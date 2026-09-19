@@ -6,29 +6,56 @@ import { createRoute, z } from '@hono/zod-openapi';
 import {
   CreateAgentRequestSchema,
   DeleteAgentResponseSchema,
+  GetAgentCodeSnippetsRequestQuerySchema,
+  GetAgentCodeSnippetsResponseSchema,
   GetAgentResponseSchema,
   ListAgentsResponseSchema,
   UpdateAgentRequestSchema,
 } from '../schemas/agent';
+import { AGENTS_PAGE_DEFAULT, AGENTS_PAGE_LIMIT } from '../schemas/common';
 import { RequestErrorResponseSchema } from '../schemas/errors';
+import { TOKEN_PAGINATION } from './fernExtensions';
 import { OpenApiTag } from './openapiTags';
 
 export const AgentIdParamsSchema = z.object({
   agent_id: z.string().min(1).max(64).describe('Immutable agent identifier.'),
 });
 
+export const ListAgentsQuerySchema = z
+  .object({
+    limit: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(AGENTS_PAGE_LIMIT)
+      .optional()
+      .default(AGENTS_PAGE_DEFAULT)
+      .describe(`Page size. Defaults to ${String(AGENTS_PAGE_DEFAULT)}, max ${String(AGENTS_PAGE_LIMIT)}.`),
+    page_token: z.string().optional().describe('Opaque token from a previous response `next_page_token`.'),
+    agent_name: z.string().trim().min(1).optional().describe('Case-insensitive substring match on agent name.'),
+  })
+  .openapi('ListAgentsQuery');
+
 export const listAgentsRoute = createRoute({
   method: 'get',
   path: '/',
   tags: [OpenApiTag.AGENTS],
   summary: 'List agents',
-  description: 'All configured agents for the tenant.',
+  description: 'List configured agents for the tenant, ordered by name. Optional `agent_name` filters by substring.',
   'x-fern-sdk-group-name': ['agents'],
   'x-fern-sdk-method-name': 'list',
+  'x-fern-pagination': TOKEN_PAGINATION,
+  request: {
+    query: ListAgentsQuerySchema,
+  },
   responses: {
     200: {
       content: { 'application/json': { schema: ListAgentsResponseSchema } },
-      description: 'All configured agents.',
+      description: 'Paginated matching agents.',
+    },
+    400: {
+      content: { 'application/json': { schema: RequestErrorResponseSchema } },
+      description: 'Invalid query parameters or page token.',
     },
     401: {
       content: { 'application/json': { schema: RequestErrorResponseSchema } },
@@ -73,6 +100,32 @@ export const createAgentRoute = createRoute({
   },
 });
 
+export const getAgentCodeSnippetsRoute = createRoute({
+  method: 'get',
+  path: '/{agent_id}/code-snippets',
+  tags: [OpenApiTag.AGENTS],
+  summary: 'Get agent SDK code snippets',
+  description:
+    'TrueForge SDK samples (TypeScript and Python, stream and non-stream) for a session and turn against this agent.',
+  'x-fern-sdk-group-name': ['internal', 'agents'],
+  'x-fern-sdk-method-name': 'get_code_snippets',
+  'x-excluded': true,
+  request: {
+    params: AgentIdParamsSchema,
+    query: GetAgentCodeSnippetsRequestQuerySchema,
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: GetAgentCodeSnippetsResponseSchema } },
+      description: 'SDK samples.',
+    },
+    404: {
+      content: { 'application/json': { schema: RequestErrorResponseSchema } },
+      description: 'Agent not found.',
+    },
+  },
+});
+
 export const getAgentRoute = createRoute({
   method: 'get',
   path: '/{agent_id}',
@@ -101,7 +154,7 @@ export const deleteAgentRoute = createRoute({
   path: '/{agent_id}',
   tags: [OpenApiTag.AGENTS],
   summary: 'Delete an agent',
-  description: 'Delete a configured agent by immutable id. Idempotent if already gone.',
+  description: 'Delete a configured agent by immutable id.',
   'x-fern-sdk-group-name': ['agents'],
   'x-fern-sdk-method-name': 'delete',
   request: {
@@ -116,6 +169,10 @@ export const deleteAgentRoute = createRoute({
       content: { 'application/json': { schema: RequestErrorResponseSchema } },
       description: 'OIDC is configured and the request has no valid session cookie.',
     },
+    404: {
+      content: { 'application/json': { schema: RequestErrorResponseSchema } },
+      description: 'Agent not found.',
+    },
   },
 });
 
@@ -124,7 +181,7 @@ export const putAgentRoute = createRoute({
   path: '/{agent_id}',
   tags: [OpenApiTag.AGENTS],
   summary: 'Update an agent',
-  description: 'Replaces the manifest for an existing agent keyed by immutable `agent_id`.',
+  description: 'Update an existing agent by immutable id.',
   'x-fern-sdk-group-name': ['agents'],
   'x-fern-sdk-method-name': 'update',
   request: {

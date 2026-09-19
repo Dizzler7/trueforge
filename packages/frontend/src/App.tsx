@@ -1,4 +1,11 @@
-import { getErrorMessage, ThemeProvider, TrueForgeUI, type SlotOverrides } from '@truefoundry/trueforge-ui';
+import {
+  getErrorMessage,
+  ThemeProvider,
+  TrueForgeUI,
+  useTheme,
+  type SlotOverrides,
+  type ThemeConfig,
+} from '@truefoundry/trueforge-ui';
 import {
   createTrueForgeClient,
   getCapabilities,
@@ -6,16 +13,47 @@ import {
   type HarnessAgentSpec,
 } from '@truefoundry/trueforge-ui/plugins/trueforge-agent-server-adapter';
 import { useEffect, useMemo, useState } from 'react';
+import { ThinkingOrb } from 'thinking-orbs';
 import { AuthErrorScreen } from './AuthErrorScreen';
 import { createAuthAwareFetch } from './authFetch';
 import { probeSession, type SessionState } from './authSession';
 import { parseAuthErrorReason, shouldShowAuthErrorScreen, stripAuthErrorSearch } from './authStatusSearch';
 import { GetStartedScreen } from './GetStartedScreen';
 import { LogoutButton } from './LogoutButton';
+import { NewAgentWelcomeScreen } from './NewAgentWelcomeScreen';
+import { API_BASE_URL, uiRouterBasename } from './publicPath';
 
 /** Shared cookie/OIDC fetch for boot helpers and `<TrueForgeUI server />`. */
 const authAwareFetch = createAuthAwareFetch();
-const bootClient = createTrueForgeClient({ fetch: authAwareFetch });
+// UI + API share the public prefix from `window.__TRUEFORGE_BASE_PATH__`.
+const bootClient = createTrueForgeClient({ baseUrl: API_BASE_URL, fetch: authAwareFetch });
+const routerBasename = uiRouterBasename();
+
+/** Host brand: primary CTA fill is a gradient (see `index.css`); keep solid token for accents. */
+const appTheme: ThemeConfig = {
+  className: 'harness-primary-gradient',
+  tokens: {
+    primaryButtonBg: '#6366F1',
+    primaryButtonHover: '#3d2dd4',
+  },
+};
+
+function Loader() {
+  const { mode } = useTheme();
+  return (
+    <div className="boot-screen" role="status" aria-label="Loading" aria-live="polite" aria-busy="true">
+      <ThinkingOrb
+        state="connecting"
+        speed={1}
+        theme={mode}
+        paused={false}
+        aria-hidden
+        size={64}
+        style={{ width: '4.5rem', height: '4.5rem' }}
+      />
+    </div>
+  );
+}
 
 type BootState =
   | { status: 'loading' }
@@ -24,7 +62,7 @@ type BootState =
 
 export function App() {
   const authError = parseAuthErrorReason(window.location.search);
-  const [session, setSession] = useState<SessionState | 'checking'>('checking');
+  const [session, setSession] = useState<SessionState | { status: 'checking' }>({ status: 'checking' });
   const [boot, setBoot] = useState<BootState>({ status: 'loading' });
 
   // Gate boot on a non-redirecting `/me` probe: unauthenticated users see the
@@ -44,7 +82,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (session !== 'authenticated') {
+    if (session.status !== 'authenticated') {
       return;
     }
     if (parseAuthErrorReason(window.location.search) == null) {
@@ -62,7 +100,7 @@ export function App() {
   }, [session]);
 
   useEffect(() => {
-    if (session !== 'authenticated') {
+    if (session.status !== 'authenticated') {
       return;
     }
     const state = { cancelled: false };
@@ -77,7 +115,7 @@ export function App() {
         if (first === undefined) {
           setBoot({
             status: 'ready',
-            openSettings: true,
+            openSettings: capabilities.settings.enabled,
             defaultAgentSpec: {
               model: { name: '' },
               config: sandboxConfig,
@@ -113,28 +151,31 @@ export function App() {
     };
   }, [session]);
 
-  const overrides: SlotOverrides = useMemo(() => ({ ShellActionsActionSlot: LogoutButton }), []);
+  const overrides: SlotOverrides = useMemo(
+    () => ({ ShellActionsActionSlot: LogoutButton, WelcomeScreen: NewAgentWelcomeScreen }),
+    [],
+  );
 
   const authErrorReason = shouldShowAuthErrorScreen({ authError, session });
   if (authErrorReason != null) {
     return (
-      <ThemeProvider>
+      <ThemeProvider theme={appTheme}>
         <AuthErrorScreen reason={authErrorReason} />
       </ThemeProvider>
     );
   }
 
-  if (session === 'checking') {
+  if (session.status === 'checking') {
     return (
-      <ThemeProvider>
-        <div className="boot-screen">Loading application…</div>
+      <ThemeProvider theme={appTheme}>
+        <Loader />
       </ThemeProvider>
     );
   }
 
-  if (session === 'unauthenticated') {
+  if (session.status === 'unauthenticated') {
     return (
-      <ThemeProvider>
+      <ThemeProvider theme={appTheme}>
         <GetStartedScreen />
       </ThemeProvider>
     );
@@ -142,7 +183,7 @@ export function App() {
 
   if (boot.status === 'error') {
     return (
-      <ThemeProvider>
+      <ThemeProvider theme={appTheme}>
         <div className="boot-screen" data-error="true">
           Failed to load application configuration: {boot.message}
         </div>
@@ -152,8 +193,8 @@ export function App() {
 
   if (boot.status === 'loading') {
     return (
-      <ThemeProvider>
-        <div className="boot-screen">Loading application…</div>
+      <ThemeProvider theme={appTheme}>
+        <Loader />
       </ThemeProvider>
     );
   }
@@ -161,15 +202,18 @@ export function App() {
   return (
     <div className="app-root">
       <TrueForgeUI
-        server={{ type: 'trueforge', baseUrl: '/', fetch: authAwareFetch }}
+        server={{ type: 'trueforge', baseUrl: API_BASE_URL, fetch: authAwareFetch }}
         layout="sidebar"
         withRouter
+        {...(routerBasename ? { routes: { basename: routerBasename } } : {})}
         agentConfig={{
           mode: 'AgentLibraryWithComposer',
           defaultAgentSpec: boot.defaultAgentSpec,
         }}
         initialSettingsOpen={boot.openSettings}
+        currentUser={{ displayName: session.displayName }}
         overrides={overrides}
+        theme={appTheme}
         className="app-assistant"
       />
     </div>

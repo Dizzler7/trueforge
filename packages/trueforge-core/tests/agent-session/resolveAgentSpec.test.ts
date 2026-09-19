@@ -3,7 +3,14 @@ import { EventType } from '../../src/agent-session/schemas/events';
 import { Sessions } from '../../src/agent-session/Sessions';
 import { InMemorySessionStore } from '../../src/agent-session/store/InMemorySessionStore';
 import { TurnResourceResolver } from '../../src/agent-session/TurnResourceResolver';
-import { makeAgentSpec, makeMockILLM, makeSilentLogger, makeTestResolver, mintTestTurnId } from './testHelpers';
+import {
+  makeAgentSpec,
+  makeMockILLM,
+  makeSilentLogger,
+  makeTestResolver,
+  mintTestTurnId,
+  TEST_ACTIVE_EXECUTOR_ID,
+} from './testHelpers';
 
 describe('TurnResourceResolver.resolveAgentSpec', () => {
   it('fails closed when deps.agent is not wired for a named lookup', async () => {
@@ -89,14 +96,16 @@ describe('SessionHandle.createTurn named resolve', () => {
     const session = await sessions.create({
       tenant_id: 'tenant-1',
       session_id: 's-named',
-      created_by: 'user-1',
+      created_by_subject: { subject_id: 'user-1', subject_type: 'user', subject_display_name: 'user-1' },
       agent: { type: 'reference', id: 'agent-abc', name: null },
+      external_id: null,
     });
 
     const live = makeAgentSpec({ instructions: 'from-registry' });
     const agent = jest.fn().mockResolvedValue(live);
     const turn = await session.createTurn({
       turn_id: mintTestTurnId(),
+      active_executor_id: TEST_ACTIVE_EXECUTOR_ID,
       input: [{ type: EventType.USER_MESSAGE, content: 'hi' }],
       previous_turn_id: 'none',
       signal: new AbortController().signal,

@@ -12,6 +12,7 @@ import {
   makeSilentLogger,
   makeTestResolver,
   mintTestTurnId,
+  TEST_ACTIVE_EXECUTOR_ID,
 } from './testHelpers';
 
 describe('TurnHandle.stream()', () => {
@@ -23,7 +24,7 @@ describe('TurnHandle.stream()', () => {
     const session = await sessions.create({
       tenant_id: tenant,
       session_id: 's1',
-      created_by: 'user-1',
+      created_by_subject: { subject_id: 'user-1', subject_type: 'user', subject_display_name: 'user-1' },
       agent: {
         type: 'inline',
         spec: makeAgentSpec({
@@ -32,6 +33,7 @@ describe('TurnHandle.stream()', () => {
           },
         }),
       },
+      external_id: null,
     });
     return { store, session };
   }
@@ -40,6 +42,7 @@ describe('TurnHandle.stream()', () => {
     const { store, session } = await createSession();
     const turn = await session.createTurn({
       turn_id: mintTestTurnId(),
+      active_executor_id: TEST_ACTIVE_EXECUTOR_ID,
       input: [{ type: EventType.USER_MESSAGE, content: 'hello' }],
       previous_turn_id: 'none',
       signal: new AbortController().signal,
@@ -82,6 +85,7 @@ describe('TurnHandle.stream()', () => {
     const { session } = await createSession();
     const turn = await session.createTurn({
       turn_id: 'turn-usage',
+      active_executor_id: TEST_ACTIVE_EXECUTOR_ID,
       input: [{ type: EventType.USER_MESSAGE, content: 'hello' }],
       previous_turn_id: 'none',
       signal: new AbortController().signal,
@@ -117,6 +121,7 @@ describe('TurnHandle.stream()', () => {
 
     const turn1 = await session.createTurn({
       turn_id: 'turn-isolation-1',
+      active_executor_id: TEST_ACTIVE_EXECUTOR_ID,
       input: [{ type: EventType.USER_MESSAGE, content: 'turn one' }],
       previous_turn_id: 'none',
       signal: new AbortController().signal,
@@ -144,6 +149,7 @@ describe('TurnHandle.stream()', () => {
 
     const turn2 = await session.createTurn({
       turn_id: 'turn-isolation-2',
+      active_executor_id: TEST_ACTIVE_EXECUTOR_ID,
       input: [{ type: EventType.USER_MESSAGE, content: 'turn two' }],
       previous_turn_id: 'auto',
       signal: new AbortController().signal,
@@ -182,6 +188,7 @@ describe('TurnHandle.stream()', () => {
     const { session } = await createSession();
     const turn = await session.createTurn({
       turn_id: 'turn-cache-read',
+      active_executor_id: TEST_ACTIVE_EXECUTOR_ID,
       input: [{ type: EventType.USER_MESSAGE, content: 'hello' }],
       previous_turn_id: 'none',
       signal: new AbortController().signal,
@@ -208,6 +215,7 @@ describe('TurnHandle.stream()', () => {
     const { session } = await createSession();
     const turn = await session.createTurn({
       turn_id: mintTestTurnId(),
+      active_executor_id: TEST_ACTIVE_EXECUTOR_ID,
       input: [{ type: EventType.USER_MESSAGE, content: 'hello' }],
       previous_turn_id: 'none',
       signal: new AbortController().signal,
@@ -226,6 +234,7 @@ describe('TurnHandle.stream()', () => {
     const { session } = await createSession();
     const turn = await session.createTurn({
       turn_id: mintTestTurnId(),
+      active_executor_id: TEST_ACTIVE_EXECUTOR_ID,
       input: [{ type: EventType.USER_MESSAGE, content: 'hello' }],
       previous_turn_id: 'none',
       signal: new AbortController().signal,
@@ -250,6 +259,7 @@ describe('TurnHandle.stream()', () => {
     let closeCalls = 0;
     const turn = await session.createTurn({
       turn_id: mintTestTurnId(),
+      active_executor_id: TEST_ACTIVE_EXECUTOR_ID,
       input: [{ type: EventType.USER_MESSAGE, content: 'hello' }],
       previous_turn_id: 'none',
       signal: new AbortController().signal,
@@ -281,6 +291,7 @@ describe('TurnHandle.stream()', () => {
     const controller = new AbortController();
     const turn = await session.createTurn({
       turn_id: mintTestTurnId(),
+      active_executor_id: TEST_ACTIVE_EXECUTOR_ID,
       input: [{ type: EventType.USER_MESSAGE, content: 'hello' }],
       previous_turn_id: 'none',
       signal: controller.signal,
@@ -307,6 +318,7 @@ describe('TurnHandle.stream()', () => {
     const controller = new AbortController();
     const turn = await session.createTurn({
       turn_id: mintTestTurnId(),
+      active_executor_id: TEST_ACTIVE_EXECUTOR_ID,
       input: [{ type: EventType.USER_MESSAGE, content: 'hello' }],
       previous_turn_id: 'none',
       signal: controller.signal,
@@ -335,6 +347,7 @@ describe('TurnHandle.stream()', () => {
     const controller = new AbortController();
     const turn = await session.createTurn({
       turn_id: mintTestTurnId(),
+      active_executor_id: TEST_ACTIVE_EXECUTOR_ID,
       input: [{ type: EventType.USER_MESSAGE, content: 'hello' }],
       previous_turn_id: 'none',
       signal: controller.signal,
@@ -363,6 +376,7 @@ describe('TurnHandle.stream()', () => {
     let closeCalls = 0;
     const turn = await session.createTurn({
       turn_id: mintTestTurnId(),
+      active_executor_id: TEST_ACTIVE_EXECUTOR_ID,
       input: [{ type: EventType.USER_MESSAGE, content: 'hello' }],
       previous_turn_id: 'none',
       signal: new AbortController().signal,
@@ -406,6 +420,7 @@ describe('TurnHandle.stream()', () => {
     // Spec already has sandbox.enabled from createSession helper.
     const turn = await session.createTurn({
       turn_id: mintTestTurnId(),
+      active_executor_id: TEST_ACTIVE_EXECUTOR_ID,
       input: [{ type: EventType.USER_MESSAGE, content: 'hello' }],
       previous_turn_id: 'none',
       signal: new AbortController().signal,
@@ -459,6 +474,30 @@ describe('TurnResourceResolver caches', () => {
     expect(creates).toBe(1);
   });
 
+  it('getModel single-flights by model name', async () => {
+    const logger = makeSilentLogger();
+    let llmCalls = 0;
+    const modelClient = makeMockILLM();
+    const resolver = new (class extends TurnResourceResolver {
+      async resolveTwice() {
+        const [a, b] = await Promise.all([this.getModel('acct/model-a'), this.getModel('acct/model-a')]);
+        expect(a).toBe(b);
+      }
+    })({
+      llm: async () => {
+        llmCalls += 1;
+        await new Promise(r => setTimeout(r, 10));
+        return { modelClient, defaultModelParams: {} };
+      },
+      mcp: () => Promise.reject(new Error('unused')),
+      mcpRequestTimeoutMs: 1_000,
+      mcpConnectTimeoutMs: 1_000,
+      logger,
+    });
+    await resolver.resolveTwice();
+    expect(llmCalls).toBe(1);
+  });
+
   it('resolveSandbox called once per run via SessionHandle.createTurn', async () => {
     const sandbox = makeStubPublicSandbox();
     jest.spyOn(sandbox, 'close').mockResolvedValue(undefined);
@@ -484,7 +523,7 @@ describe('TurnResourceResolver caches', () => {
     const session = await sessions.create({
       tenant_id: 't',
       session_id: 's',
-      created_by: 'user-1',
+      created_by_subject: { subject_id: 'user-1', subject_type: 'user', subject_display_name: 'user-1' },
       agent: {
         type: 'inline',
         spec: makeAgentSpec({
@@ -493,9 +532,11 @@ describe('TurnResourceResolver caches', () => {
           },
         }),
       },
+      external_id: null,
     });
     const turn = await session.createTurn({
       turn_id: mintTestTurnId(),
+      active_executor_id: TEST_ACTIVE_EXECUTOR_ID,
       input: [{ type: EventType.USER_MESSAGE, content: 'hi' }],
       previous_turn_id: 'none',
       signal: new AbortController().signal,

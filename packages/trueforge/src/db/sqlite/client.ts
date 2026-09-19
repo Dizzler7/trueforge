@@ -110,6 +110,9 @@ class ImmediateSqliteDialect implements Dialect {
 
 function applyPragmas(database: Database.Database): void {
   database.pragma('journal_mode = WAL');
+  // Autocheckpoint ~4 MiB; leftover WAL 64 MiB after checkpoint (Rails/common WAL-app default).
+  database.pragma('wal_autocheckpoint = 1000');
+  database.pragma('journal_size_limit = 67108864');
   database.pragma('busy_timeout = 5000');
   database.pragma('synchronous = NORMAL');
   database.pragma('foreign_keys = ON');
@@ -124,6 +127,8 @@ function applyPragmas(database: Database.Database): void {
 const JSON_RESULT_COLUMNS = new Set([
   'agent_spec',
   'custom',
+  'metadata',
+  'metrics',
   'ancestor_ids',
   'input',
   'state',
@@ -137,11 +142,14 @@ const JSON_RESULT_COLUMNS = new Set([
   'thread_checkpoint',
   'event',
   'manifest',
+  'metadata',
   'build_metadata',
   'oauth_server',
   'oauth_client',
   'token',
   'auth_data',
+  'created_by_subject',
+  'source',
 ]);
 
 /** Top-level row field only — `$[0]."body"`, not `$[0]."body"."content"`. */

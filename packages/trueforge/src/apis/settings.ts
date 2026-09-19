@@ -4,28 +4,28 @@
  * Auth is applied at the /api/v1/settings mount boundary in app.ts (admin when auth is enabled).
  */
 import { OpenAPIHono } from '@hono/zod-openapi';
+import type { Context } from 'hono';
 import type { Logger } from 'winston';
-import type { ResolveUserContext } from '../auth/identity';
-import type { IMcpServerStore } from '../db/mcpServerStore';
+import type { ResolveRequestContext } from '../auth/identity';
+import type { IMcpServerWithAuthStore } from '../db/mcpServerStore';
 import type { IModelProviderStore } from '../db/modelProviderStore';
 import type { ISandboxProviderStore } from '../db/sandboxProviderStore';
-import type { ISkillStore } from '../db/skillStore';
 import type { WithTransaction } from '../db/transaction';
 import type { IOAuthTokenStore } from '../mcp/auth/types';
 import { createSettingsMcpServersRouter } from './mcpServers';
 import { createModelProvidersRouter } from './modelProviders';
 import { createSandboxProvidersRouter } from './sandboxProviders';
-import { createSkillsRouter } from './skills';
+import { createSkillsRouter, type ResolveSkillStore } from './skills';
 
 export interface SettingsRouterDeps<TTransaction> {
-  modelProviderStore: IModelProviderStore<TTransaction>;
-  mcpServerStore: IMcpServerStore<TTransaction>;
+  resolveModelProviderStore: (c: Context) => IModelProviderStore<TTransaction>;
+  resolveMcpServerStore: (c: Context) => IMcpServerWithAuthStore<TTransaction>;
   tokenStore: IOAuthTokenStore<TTransaction>;
-  skillStore: ISkillStore<TTransaction>;
-  sandboxProviderStore: ISandboxProviderStore<TTransaction>;
+  resolveSkillStore: ResolveSkillStore<TTransaction>;
+  resolveSandboxProviderStore: (c: Context) => ISandboxProviderStore<TTransaction>;
   withTransaction: WithTransaction<TTransaction>;
   logger: Logger;
-  resolveUserContext: ResolveUserContext;
+  resolveRequestContext: ResolveRequestContext;
 }
 
 export function createSettingsRouter<TTransaction>(deps: SettingsRouterDeps<TTransaction>) {
@@ -33,33 +33,36 @@ export function createSettingsRouter<TTransaction>(deps: SettingsRouterDeps<TTra
   router.route(
     '/model-providers',
     createModelProvidersRouter({
-      modelProviderStore: deps.modelProviderStore,
+      resolveModelProviderStore: deps.resolveModelProviderStore,
       withTransaction: deps.withTransaction,
+      resolveRequestContext: deps.resolveRequestContext,
     }),
   );
   router.route(
     '/mcp-servers',
     createSettingsMcpServersRouter({
-      mcpServerStore: deps.mcpServerStore,
+      resolveMcpServerStore: deps.resolveMcpServerStore,
       tokenStore: deps.tokenStore,
       withTransaction: deps.withTransaction,
       logger: deps.logger,
-      resolveUserContext: deps.resolveUserContext,
+      resolveRequestContext: deps.resolveRequestContext,
     }),
   );
   router.route(
     '/skills',
     createSkillsRouter({
-      skillStore: deps.skillStore,
+      resolveSkillStore: deps.resolveSkillStore,
       withTransaction: deps.withTransaction,
+      resolveRequestContext: deps.resolveRequestContext,
     }),
   );
   router.route(
     '/sandbox-providers',
     createSandboxProvidersRouter({
-      sandboxProviderStore: deps.sandboxProviderStore,
+      resolveSandboxProviderStore: deps.resolveSandboxProviderStore,
       withTransaction: deps.withTransaction,
       logger: deps.logger,
+      resolveRequestContext: deps.resolveRequestContext,
     }),
   );
   return router;

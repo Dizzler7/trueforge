@@ -61,7 +61,7 @@ interface StatResult {
 }
 
 export class TFYSandboxProvider implements SandboxProvider {
-  readonly type = 'tfy';
+  readonly type = 'truefoundry';
   private readonly serverUrl: string;
   private readonly natsBridgeUrl: string;
   private readonly tenantName: string;
@@ -251,14 +251,15 @@ export class TFYSandboxProvider implements SandboxProvider {
   getAdditionalInstructions(): string {
     return dedent`
     SANDBOX RULES:
-    - uploads, skills, and tool-results live in the sandbox working directory (not /tmp or /opt).
-    - ALL file creation and writes MUST stay within the sandbox working directory.
+    - The Agent's first sandbox command should be \`pwd\` to discover the working directory.
+    - uploads, skills, and tool-results live in that working directory (not /tmp or /opt).
+    - ALL file creation and writes MUST stay within that working directory.
     - The Agent must NOT write to /tmp/, ~/, or any absolute path outside the working directory.
   `;
   }
 
   // Cwd-relative (no FS jail). exec() pwd-joins GIT_CONFIG / PATH / PYTHONPATH.
-  //   uploads, skills, tool-results, git_downloader.py, .git-credentials
+  //   uploads, skills, tool-results, skill_downloader.py, .git-credentials
   //   mcp-client/mcp_client.py  (no /usr/local/bin symlink)
   getToolResultDumpDir(): string {
     return 'tool-results';
@@ -276,7 +277,7 @@ export class TFYSandboxProvider implements SandboxProvider {
     return 'skills';
   }
 
-  getGitDownloaderPath(): string {
-    return 'git_downloader.py';
+  getSkillDownloaderPath(): string {
+    return 'skill_downloader.py';
   }
 }

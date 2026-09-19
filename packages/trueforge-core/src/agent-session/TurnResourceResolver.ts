@@ -9,6 +9,7 @@ import type { AgentInfo } from '../core/runtime/AgentThread.types';
 import type { Sandbox, SandboxInfo } from '../core/sandbox/Sandbox';
 import type { AgentTracing } from '../core/tracing/AgentTracing';
 import { NOOP_AGENT_TRACING } from '../core/tracing/NoopAgentTracing';
+import type { IWebSearchProvider } from '../core/web-search/WebSearchProvider';
 import type { ITurnResourceResolver, ResolvedAgentDefinition } from './ITurnResourceResolver';
 import type { TurnRecord } from './models/TurnRecord';
 import type { AgentSpec } from './schemas/agentSpec';
@@ -49,20 +50,23 @@ function toSelectors(entry: {
  * behavior; subclass and override to customize (tool sources, sandbox,
  * tracing).
  */
+interface ResolvedModel {
+  modelClient: ILLM;
+  defaultModelParams: ModelParams;
+  modelProperties?: AgentDefinition['modelProperties'];
+}
+
 export class TurnResourceResolver<
   TTurnCustom extends object = Record<string, never>,
 > implements ITurnResourceResolver<TTurnCustom> {
   readonly #sources = new Map<string, Promise<ToolSource>>();
+  readonly #models = new Map<string, Promise<ResolvedModel>>();
   #sandbox?: Sandbox | undefined;
 
   constructor(
     protected readonly deps: {
       /** Model name → client and defaults. Called once per resolved definition; may load provider config. */
-      llm: (model: string) => Promise<{
-        modelClient: ILLM;
-        defaultModelParams: ModelParams;
-        modelProperties?: AgentDefinition['modelProperties'];
-      }>;
+      llm: (model: string) => Promise<ResolvedModel>;
       /**
        * MCP server name → connection details. Required to use spec.mcp_servers:
        * the AgentSpec carries names only (no url/headers on the wire) — the
@@ -72,6 +76,7 @@ export class TurnResourceResolver<
       mcp: (name: string) => Promise<{ url: string; headers?: RemoteMcpHeaders }>;
       mcpRequestTimeoutMs: number;
       mcpConnectTimeoutMs: number;
+      mcpMaxResponseBytes?: number | undefined;
       /** One sandbox type per runtime. Omit = no sandbox support. */
       sandboxProvider?: TurnSandboxFactory | undefined;
       /**
@@ -79,10 +84,16 @@ export class TurnResourceResolver<
        * session is bound by reference; omit only if all sessions use inline agents.
        */
       agent?: ((agentId: string) => Promise<AgentSpec>) | undefined;
+      /** Host web-search backend; omit when not configured. */
+      webSearchProvider?: IWebSearchProvider | undefined;
       /** Forwarded to RemoteMCP / AgentThread (required by their constructors). */
       logger: Logger;
     },
   ) {}
+
+  get webSearchProvider(): IWebSearchProvider | undefined {
+    return this.deps.webSearchProvider;
+  }
 
   get logger(): Logger {
     return this.deps.logger;
@@ -181,6 +192,9 @@ export class TurnResourceResolver<
               sessionId: previousTurn?.snapshot.mcp_servers?.[entry.name]?.session_id,
               requestTimeoutMs: this.deps.mcpRequestTimeoutMs,
               connectTimeoutMs: this.deps.mcpConnectTimeoutMs,
+              ...(this.deps.mcpMaxResponseBytes !== undefined
+                ? { maxResponseBytes: this.deps.mcpMaxResponseBytes }
+                : {}),
               logger: this.deps.logger,
               tracing,
               signal,
@@ -197,7 +211,7 @@ export class TurnResourceResolver<
     // Sub-agents may request a different catalog model via agent_info.model;
     // resolve that name so modelClient matches the override (not just a label).
     const modelName = agentInfo?.model ?? spec.model.name;
-    const resolvedModel = await this.deps.llm(modelName);
+    const resolvedModel = await this.getModel(modelName);
     return {
       definition: {
         modelClient: resolvedModel.modelClient,
@@ -235,6 +249,20 @@ export class TurnResourceResolver<
     }
     const made = input.create();
     this.#sources.set(input.id, made);
+    return made;
+  }
+
+  /**
+   * Resolves `deps.llm` once per distinct model name for this turn — parent and
+   * sub-agents with the same catalog model share one promise.
+   */
+  protected getModel(modelName: string): Promise<ResolvedModel> {
+    const cached = this.#models.get(modelName);
+    if (cached) {
+      return cached;
+    }
+    const made = this.deps.llm(modelName);
+    this.#models.set(modelName, made);
     return made;
   }
 }

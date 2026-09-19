@@ -64,8 +64,17 @@ Public override surface (primitives stay theme/CSS — not slots):
   `ChatFileDownload`, `MonacoEditorCore`, `CodeEditor`
 - **Thread list:** `ThreadListShell`, `ThreadListNewButton`, `ThreadListRow`,
   `ThreadListRowSkeleton`, `ThreadListEmptyState`, `HistoryLoader`,
-  `AgentsLibrary`, `AgentsLibraryButton`, `SaveAgentButton`,
-  `SelectAgentEmptyState`, `ClearChatButton`
+  `AgentsLibrary`, `AgentsLibraryButton`, `SessionsBrowserButton`,
+  `SaveAgentButton`, `SelectAgentEmptyState`, `ClearChatButton`
+- **Agent details / sessions:** `AgentDetailsPage`, `AgentDetailsHeader`,
+  `AgentDetailsTabs`, `AgentDetailsUnavailable`, `AgentOverview`,
+  `AgentOverviewCard`, `AgentSessions`, `AgentSessionsFilters`, `SessionsPage`,
+  `AgentMetrics`, `AgentMetricsView`, `AgentMetricsTimeRangeFilter`,
+  `AgentMetricCard`, `AgentMetricChart`,
+  `AgentSessionListRow`, `AgentSessionDetailHeader`, `AgentSessionMetricsStrip`,
+  `AgentSessionTimelineContainer`, `AgentSessionEventTimeline`,
+  `AgentSessionEventTimelineChart`, `AgentSessionTurnHeader`,
+  `AgentCodeSnippets`, `AgentCodeBlock`
 - **Attachments / toasts:** `AttachmentCard`, `AttachmentPreviewDialog`,
   `AttachmentPickerButton`, `Toast`, `ToastStack`
 - **Tools / prompts:** `ToolCallCard`, `ToolCallContentBlock`,
@@ -87,9 +96,14 @@ router should leave it off (the default).
 Places mirrored to the URL:
 
 - `/` — new chat / library landing (mode-dependent)
+- `/build-agent` — new agent builder
 - `/agents/:agentName` — immutable "Try" of a library agent
+- `/sessions` — all-user Sessions browser (named agents and drafts)
 - `/sessions/:sessionId` — a specific chat session
 - `/settings` — settings overlay (closing navigates to the chat place below it)
+- `/library` — Agents
+- `/library/:agentId` — agent details. `?tab=overview|sessions|code|metrics` selects the tab (default Overview);
+  Metrics is available when the server provides the optional `metrics` port
 
 Customize the paths (only honored when `withRouter`). Set any entry to `false`
 to keep that place overlay-only with no URL:
@@ -100,12 +114,17 @@ to keep that place overlay-only with no URL:
   withRouter
   routes={{
     basename: '/app',
-    paths: { session: '/chats/:sessionId', settings: false },
+    paths: {
+      buildAgent: '/new-agent',
+      session: '/chats/:sessionId',
+      libraryAgent: '/library/:agentId',
+      settings: false,
+    },
   }}
 />
 ```
 
-Custom `agent` / `session` templates must keep their `:param` segment, or the
+Custom `agent` / `session` / `libraryAgent` templates must keep their `:param` segment, or the
 place can be written to the URL but not read back.
 
 Shell state stays the source of truth; the router mirrors it. Combining
@@ -113,14 +132,38 @@ Shell state stays the source of truth; the router mirrors it. Combining
 
 Notes on behaviour:
 
-- Only the pathname is owned; query string and hash are preserved across
-  navigation, so host state in `?…` survives switching sessions.
+- Hashes and host-owned query keys are preserved across navigation. Session
+  keys (`sessionId`, `agentId`, `tab`, `view`, `s_tw`, `s_sts`, `s_ets`) are
+  removed when the destination does not own them, preventing stale filters or
+  selections from leaking into unrelated routes.
+- A copied library session link is `?agentId=&sessionId=` on the current page
+  (plus `/library/:agentId` when `withRouter`). Opening it lands on that
+  agent's Sessions tab. Clicking an agent in the library writes `?tab=overview`
+  so a leftover chat `sessionId` does not open Sessions. The same query works
+  when `withRouter` is off.
+- The all-user Sessions page is `/sessions` when `withRouter` is on, or
+  `?view=sessions` when it is off. Agent and time filters live in the query
+  (`agentId`, `s_tw` for a relative window, or `s_sts`/`s_ets` for an absolute
+  range). Opening a session pins `s_sts`/`s_ets` around `created_at` (±5 min)
+  so a refresh still finds that row on page 1 without scrolling the list.
 - A `/sessions/:sessionId` link is resolved through `getSession` so the chat
   opens with its own agent binding and mutability rather than as a new draft.
+- `/build-agent` is used for a fresh builder; after its draft session persists,
+  the URL transitions to `/sessions/:sessionId`.
+- Agent-filtered chat history keeps one intent key in the query string:
+  `try_agent_name` hides the filter for a Try Agent flow, while
+  `history_agent_name` shows an explicitly selected filter. Both values are
+  display names; the shell resolves the backend agent id before listing sessions.
+  Non-chat destinations such as Build Agent, Agents, Sessions, Schedules, and
+  Settings clear this query state. User filter changes start a clean chat and
+  reset history pagination; All Chats remains paginated in 20-session pages.
 - Unrecognized paths (and malformed escapes) normalize to the root place.
+- `/settings` is registered only while Settings chrome is available (catalog
+  present and `capabilities.settings.enabled !== false`). When that gate is
+  off, `/settings` is treated like an unknown path and replaces to root.
 - A URL naming a place the host cannot honor (e.g. `/agents/x` without the
-  agent library, or `/settings` when the settings capability is disabled) is
-  left in the address bar until the next navigation corrects it.
+  agent library) is left in the address bar until the next navigation
+  corrects it.
 
 Hosts serving the SDK must send the app shell for unknown paths (SPA
 fallback), otherwise deep links 404 before React boots.

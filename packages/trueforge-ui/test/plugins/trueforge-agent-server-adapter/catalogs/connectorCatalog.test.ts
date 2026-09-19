@@ -26,7 +26,11 @@ describe('connectorCatalog mappers', () => {
     assert.deepEqual(toHarnessAuth({ type: 'dcr' }), { type: 'dcr' });
     assert.deepEqual(toHarnessAuth({ type: 'header', apiKey: 'sk-test' }), {
       type: 'header',
-      headers: { Authorization: 'sk-test' },
+      headers: { Authorization: 'Bearer sk-test' },
+    });
+    assert.deepEqual(toHarnessAuth({ type: 'header', apiKey: 'Bearer already' }), {
+      type: 'header',
+      headers: { Authorization: 'Bearer already' },
     });
     assert.deepEqual(toHarnessAuth({ type: 'header', apiKey: 'tok', headerName: 'X-Api-Key' }), {
       type: 'header',
@@ -143,6 +147,39 @@ describe('connectorCatalog mappers', () => {
       description: '',
     });
     assert.deepEqual(toUiTool({}), { id: 'tool', name: 'tool', description: '' });
+  });
+
+  it('forwards boolean readOnlyHint and destructiveHint annotations', () => {
+    assert.deepEqual(
+      toUiTool({
+        name: 'list',
+        description: 'List items',
+        annotations: { readOnlyHint: true, destructiveHint: false, title: 'List' },
+      }),
+      {
+        id: 'list',
+        name: 'list',
+        description: 'List items',
+        annotations: { readOnlyHint: true, destructiveHint: false },
+      },
+    );
+    assert.deepEqual(
+      toUiTool({
+        name: 'delete',
+        annotations: { destructiveHint: true },
+      }),
+      {
+        id: 'delete',
+        name: 'delete',
+        description: '',
+        annotations: { destructiveHint: true },
+      },
+    );
+    assert.deepEqual(toUiTool({ name: 'search', annotations: { title: 'Search' } }), {
+      id: 'search',
+      name: 'search',
+      description: '',
+    });
   });
 
   it('builds upsert manifests from UI create/update requests', () => {

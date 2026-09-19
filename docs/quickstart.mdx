@@ -9,8 +9,8 @@ description: 'Run TrueForge, connect a model and tools, and build your first reu
 TrueForge runs in [two modes](/introduction#two-ways-to-run-it): **local mode** — a single process on your machine, like a personal productivity tool — and **hosted mode** — a shared deployment for your team, with Postgres for storage and Redis for cross-replica peering. The agent features are identical in both.
 
 <Tabs>
-  <Tab title="Local mode (npx)">
-    Requires [Node.js](https://nodejs.org) 22.14 or newer. One command, no other infrastructure — the UI and backend run locally, and data is stored in a local SQLite file:
+  <Tab title="npx (Local)">
+    Requires [Node.js](https://nodejs.org) 22.14 or newer on macOS, Linux, or Windows. One command, no other infrastructure — the UI and backend run locally, and data is stored in a local SQLite file:
 
     ```bash
     npx @truefoundry/trueforge@latest
@@ -26,7 +26,7 @@ TrueForge runs in [two modes](/introduction#two-ways-to-run-it): **local mode** 
     </Warning>
 
   </Tab>
-  <Tab title="Hosted mode (Docker Compose)">
+  <Tab title="Docker Compose (Hosted)">
     Runs the full hosted topology on your machine: the server (UI + API), Postgres, and Redis.
 
     ```bash
@@ -44,15 +44,35 @@ TrueForge runs in [two modes](/introduction#two-ways-to-run-it): **local mode** 
     | Host ports                                            | `8791`, `5433`, `6380`  | App, Postgres, and Redis.                                |
 
   </Tab>
-  <Tab title="Hosted mode (Kubernetes)">
-    The Helm chart deploys the server in hosted mode with bundled Postgres and Redis (or point it at your own):
+  <Tab title="Kubernetes (Hosted)">
+    The Helm chart deploys the server in hosted mode with bundled Postgres and Redis (or point it at your own).
+
+    Create a Secret for the controller↔server API key, then point `apiKey` at it. The chart ships a
+    well-known placeholder (`placeholder-value-please-generate-your-own`) — strongly recommended to
+    replace with a Secret before any shared deploy (the chart does not create one):
+
+    ```bash
+    kubectl create secret generic trueforge-api-key \
+      --from-literal=TRUEFORGE_API_KEY="$(openssl rand -hex 32)"
+    ```
+
+    ```yaml
+    # values.yaml (snippet)
+    apiKey:
+      valueFrom:
+        secretKeyRef:
+          name: trueforge-api-key
+          key: TRUEFORGE_API_KEY
+    ```
 
     ```bash
     helm install trueforge oci://tfy.jfrog.io/tfy-helm/trueforge \
-      --version <x.y.z>
+      --version <x.y.z> \
+      --values values.yaml
     ```
 
     Find the version you want to install in the [published Helm charts](https://tfy.jfrog.io/ui/packages/oci:%2F%2Ftrueforge).
+    See the [chart README](https://github.com/truefoundry/trueforge/blob/main/charts/trueforge/README.md#api-key) for full `apiKey` details.
 
     To expose TrueForge through an Istio gateway, save this `VirtualService` in
     `values.yaml` under `extraObjects`. Replace the host and gateway with your
@@ -77,16 +97,17 @@ TrueForge runs in [two modes](/introduction#two-ways-to-run-it): **local mode** 
                       name: http
     ```
 
-    Then install the chart with the values file:
+    Then install (or upgrade) with the values file that includes both `apiKey` and `extraObjects`:
 
     ```bash
-    helm install trueforge oci://tfy.jfrog.io/tfy-helm/trueforge \
+    helm upgrade --install trueforge oci://tfy.jfrog.io/tfy-helm/trueforge \
       --version <x.y.z> \
       --values values.yaml
     ```
 
     | Value                  | Default | Description                                                             |
     | ---------------------- | ------- | ------------------------------------------------------------------------ |
+    | `apiKey`               | placeholder string | Controller↔server key (`TRUEFORGE_API_KEY`). Prefer `valueFrom.secretKeyRef`. |
     | `replicaCount`         | `1`     | Number of server replicas (peered over Redis).                           |
     | `postgresql.enabled`   | `true`  | Bundle Postgres; set `false` + `externalPostgres.*` to bring your own.   |
     | `redis.enabled`        | `true`  | Bundle Redis; set `false` + `externalRedis.url` (string or `valueFrom`). |
@@ -94,11 +115,35 @@ TrueForge runs in [two modes](/introduction#two-ways-to-run-it): **local mode** 
     | `configs.oidc.enabled` | `false` | Enable IdP login via `configs.oidc.*`. Default off = shared local admin — see [chart README](https://github.com/truefoundry/trueforge/blob/main/charts/trueforge/README.md#dev-defaults-read-before-exposing). |
 
   </Tab>
+  <Tab title="Railway (Hosted)">
+    Hosted topology on [Railway](https://railway.com) is defined with [Infrastructure as Code](https://docs.railway.com/infrastructure-as-code) in [`.railway/railway.ts`](https://github.com/truefoundry/trueforge/blob/main/.railway/railway.ts): one project with the server (UI + API), Postgres, and Redis. The app sets `RAILWAY_DOCKERFILE_PATH=Dockerfile.dev` so Railway builds the from-source image ([`Dockerfile.dev`](https://github.com/truefoundry/trueforge/blob/main/Dockerfile.dev)), and wires `DATABASE_URL`, `REDIS_URL`, and `PUBLIC_BASE_URL` in that file.
+
+    From a clone of this repo:
+
+    ```bash
+    pnpm install
+    railway login
+    railway init --name trueforge
+    railway config plan
+    railway config apply
+    railway domain
+    ```
+
+    `railway config apply` creates the three services and connects them. Generate a public domain on the `trueforge` service (CLI above or Settings → Networking), then open that URL.
+
+    <Warning>
+      Without [OIDC login](/authentication/overview), anyone who can reach the URL is admin. Enable login before sharing
+      a Railway deployment beyond personal use.
+    </Warning>
+
+    `STANDALONE=false` and `HOST=0.0.0.0` are baked into `Dockerfile.dev`. Railway injects `PORT` automatically.
+
+  </Tab>
 </Tabs>
 
 <Note>
-  Local mode (`npx`) uses SQLite and needs no other services. Docker Compose and Kubernetes run hosted mode: Postgres
-  replaces SQLite as durable storage, and Redis peers the replicas so streams and cancellations follow the client
+  Local mode (`npx`) uses SQLite and needs no other services. Docker Compose, Kubernetes, and Railway run hosted mode:
+  Postgres replaces SQLite as durable storage, and Redis peers the replicas so streams and cancellations follow the client
   across them.
 </Note>
 
@@ -158,32 +203,41 @@ With TrueForge open in your browser, this walkthrough takes you from an empty wo
     See the [Sandbox guide](/sandbox) for provider setup details.
   </Step>
 
-  <Step title="Compose an agent and start chatting">
-    Back in the chat, assemble the agent for this conversation. Pick a model from the selector in the composer, then open the **Tools** menu and set three things:
+  <Step title="Build the agent">
+    Open **Build Agent** from the sidebar. It's a split view: assemble the agent in the **Agent Config** panel on the left, and test it in a live chat on the right as you go.
 
-    - **Connectors** — enable **Exa**.
-    - **Skills** — enable **web-artifacts-builder**.
-    - **Capabilities** — leave **Dynamic sub-agents** on (it's the default). This lets the agent research each item in parallel instead of one at a time.
+    In the left panel, set:
+
+    - **Model** — pick one from the selector at the top and choose a reasoning effort.
+    - **Instructions** — define the agent's role and behavior. For this example:
+
+    ```text wrap
+    You are a web research assistant. Given a topic or question, use Exa to search the web and pull content from the most relevant, recent sources. When the request compares several items, research each one in parallel, then synthesize the findings into a clear one-page brief.
+    ```
+
+    - **MCP Servers** — open **Select MCP Tools**, choose **Exa**, and enable its tools.
+    - **Skills** — open the **Skills** picker and enable **web-artifacts-builder**.
+    - **Runtime Config** — open it to review execution and context settings. Keep **Dynamic sub-agents** on so the agent researches each item in parallel, and leave **Generative UI**, **Sandbox**, and **Context compaction** on.
 
     <Tabs>
-      <Tab title="Connectors">
+      <Tab title="Tools">
         <Frame>
-          ![The composer Tools menu on the Connectors tab with Exa enabled](/images/quickstart-compose-connectors.png)
+          ![The Select MCP Tools dialog with Exa selected and its web_search and web_fetch tools enabled](/images/quickstart-build-tools.png)
         </Frame>
       </Tab>
       <Tab title="Skills">
         <Frame>
-          ![The Tools menu on the Skills tab with web-artifacts-builder enabled](/images/quickstart-compose-skills.png)
+          ![The Skills dialog with web-artifacts-builder enabled](/images/quickstart-build-skills.png)
         </Frame>
       </Tab>
-      <Tab title="Capabilities">
+      <Tab title="Runtime Config">
         <Frame>
-          ![The Tools menu on the Capabilities tab with Generative UI, Dynamic sub-agents, and Ask clarifying questions toggled on](/images/quickstart-compose-capabilities.png)
+          ![The Runtime Config panel with Dynamic sub-agents, Generative UI, Ask user questions, Sandbox, and Context compaction toggled on](/images/quickstart-build-runtime.png)
         </Frame>
       </Tab>
     </Tabs>
 
-    Then send your first message. For example:
+    Then test it in the chat on the right. For example:
 
     ```text wrap
     Research the current state of open-source vector databases. Compare Qdrant, Weaviate, and Milvus on performance, features, and licensing, then write a one-page brief with sources.
@@ -191,31 +245,27 @@ With TrueForge open in your browser, this walkthrough takes you from an empty wo
 
     The agent searches with Exa, delegates each database to a parallel subagent, and uses **web-artifacts-builder** in the sandbox to render an interactive brief.
 
-    <Frame caption="The result — an interactive brief the agent built from its web research: a comparison, feature chips, and a strengths chart.">
-      ![A chat result showing an interactive comparison of Qdrant, Weaviate, and Milvus with license badges, feature chips, Performance/Features/Licensing tabs, and a radar chart of relative strengths](/images/quickstart-chat-result.png)
+    <Frame caption="The Build Agent page: Agent Config on the left, and on the right the interactive brief the agent produced, including a Generative UI radar chart of the databases' relative strengths.">
+      ![The Build Agent page with the Agent Config panel on the left (model, instructions, runtime config, MCP servers, and skills) and, on the right, an interactive brief comparing Qdrant, Weaviate, and Milvus with a radar chart of relative strengths and recommendation cards](/images/quickstart-build-agent.png)
     </Frame>
   </Step>
 
   <Step title="Save it as an agent">
-    Happy with the setup? Click **Save Agent**, then in **Save agent** give it a name and instructions and click **Save changes** — this captures the model, connectors, skills, and prompt together as a reusable agent. For this example:
+    Happy with the setup? Click **Save Agent** at the top right, give it a name and a short description, and click **Save changes**. This captures the model, instructions, tools, skills, and runtime settings together as a reusable agent. For this example:
 
-    - **Name** — `web-research-brief`
-    - **Instructions** —
-
-    ```text wrap
-    You are a web research assistant. Given a topic or question, use Exa to search the web and pull content from the most relevant, recent sources. When the request compares several items, research each one in parallel, then synthesize the findings into a clear one-page brief.
-    ```
+    - **Agent name** — `web-research-brief`
+    - **Description** — `Web research brief agent`
 
     <Frame>
-      ![The Save agent dialog with a name, instructions, and a configuration summary of model, connectors, and skills](/images/save-agent.png)
+      ![The Save agent dialog with an agent name and a description field](/images/save-agent.png)
     </Frame>
   </Step>
 
-  <Step title="Find it in the Agents Library">
-    Open **Agents Library** from the sidebar. Your saved agent is there — click **Try** to start a fresh chat with the same setup, or **Edit** to tweak it. See [Agent Library](/agent-library) for shared-visibility notes in hosted mode.
+  <Step title="Find it under Agents">
+    Open **Agents** from the sidebar. Your saved agent is listed with a summary of its model, skills, and connectors. Click **Try** to start a fresh chat with the same setup, or use the row's menu to manage it. See [Agents](/agent-library) for shared-visibility notes in hosted mode.
 
     <Frame>
-      ![The Agents Library listing the saved web-research-brief agent with Edit and Try actions](/images/quickstart-agents-library.png)
+      ![The Agents list showing the saved web-research-brief agent with its model and tool summary and a Try action](/images/quickstart-agents-library.png)
     </Frame>
   </Step>
 </Steps>
@@ -252,7 +302,8 @@ With TrueForge open in your browser, this walkthrough takes you from an empty wo
     PUBLIC_BASE_URL=https://trueforge.myorg.com npx @truefoundry/trueforge
     ```
 
-    In hosted mode, set it in `packages/trueforge/.env` (Docker Compose) or via `server.publicBaseUrl` (Helm).
+    In hosted mode, set it in `packages/trueforge/.env` (Docker Compose), via `server.publicBaseUrl` (Helm), or as
+    `PUBLIC_BASE_URL=https://${{RAILWAY_PUBLIC_DOMAIN}}` on Railway.
 
   </Accordion>
 </AccordionGroup>
@@ -265,6 +316,12 @@ With TrueForge open in your browser, this walkthrough takes you from an empty wo
   </Card>
   <Card title="Create an Agent" icon="robot" href="/create-agent/overview">
     Select resources and configure approvals, questions, and Generative UI.
+  </Card>
+  <Card title="Sessions" icon="magnifying-glass" href="/sessions">
+    Inspect the run you just made: turns, tool calls, subagents, tokens, and timing.
+  </Card>
+  <Card title="Schedules" icon="clock" href="/schedules">
+    Run a saved agent on a recurring cadence, unattended.
   </Card>
   <Card title="Harness Capabilities" icon="layer-group" href="/key-features/overview">
     Subagents, deferred tools, code mode, compaction, and more.

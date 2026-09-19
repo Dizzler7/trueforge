@@ -4,12 +4,12 @@
 readme:
   apiName: TrueForge
   introduction: >
-    TypeScript client for the TrueForge Agent Harness Server: a self-hosted
+    API client for the TrueForge Agent Harness Server: a self-hosted
     runtime that executes agent turns and streams them over Server-Sent Events.
 
 
-    When auth is enabled on the server, pass an ID token via the optional `token`
-    client option (`Authorization: Bearer`).
+    When auth is enabled on the server, pass an ID token via the optional
+    `token` client option (`Authorization: Bearer`).
   apiReferenceLink: https://trueforge.dev/api/use-agent
   # Fern keys this lookup on the stream flag, so the string form misses and fails.
   defaultEndpoint:
@@ -24,7 +24,7 @@ api:
         prefer-undiscriminated-unions-with-literals: true
         only-include-referenced-schemas: true
         type-dates-as-strings: true
-        object-query-parameters: false
+        object-query-parameters: true
         idiomatic-request-names: true
         respect-nullable-schemas: true
         wrap-references-to-nullable-in-optional: false
@@ -37,7 +37,7 @@ groups:
   ts-sdk:
     generators:
       - name: fernapi/fern-typescript-node-sdk
-        version: 3.87.1
+        version: 3.91.0
         output:
           location: local-file-system
           path: ../../packages/trueforge-sdk
@@ -58,8 +58,29 @@ groups:
               provenance: true
             engines:
               node: '>=22'
+            # Merged onto Fern's dist import/require map. Workspace loaders opt in
+            # with --conditions=trueforge-dev / customConditions. Never name this
+            # "development" (Vite/webpack auto-activate it; src/ is not published).
+            #
+            # Runtime loads src/ (no build); types stay on the generated .d.ts.
+            # Generated source is not exactOptionalPropertyTypes-clean, and pointing
+            # `types` at src/ would pull it into every consumer's tsc program.
+            exports:
+              '.':
+                'trueforge-dev':
+                  types: './dist/cjs/index.d.ts'
+                  default: './src/index.ts'
+                import:
+                  types: './dist/esm/index.d.mts'
+                  default: './dist/esm/index.mjs'
+                require:
+                  types: './dist/cjs/index.d.ts'
+                  default: './dist/cjs/index.js'
+                default: './dist/cjs/index.js'
           allowExtraFields: true
           allowCustomFetcher: true
+          # Map query params (OpenAPI additionalProperties) as deepObject brackets, not JSON strings.
+          deepObjectMapQueryParameters: true
           enableInlineTypes: false
           fetchSupport: native
           fileResponseType: binary-response
@@ -78,4 +99,30 @@ groups:
           skipResponseValidation: true
           streamType: web
           useDefaultRequestParameterValues: true
+        smart-casing: true
+  # `local-file-system` allows no `github` block, so the workflow commits the result itself.
+  python-sdk:
+    generators:
+      - name: fernapi/fern-python-sdk
+        version: 5.29.0
+        output:
+          location: local-file-system
+          path: ../../python/trueforge_sdk
+        config:
+          # Import + upload name. pip install trueforge-sdk resolves via PEP 503.
+          package_name: trueforge_sdk
+          optional_auth: true
+          stream_abstraction: true
+          use_request_defaults: all
+          inline_path_params: true
+          pydantic_config:
+            enum_type: forward_compatible_python_enums
+            frozen: false
+            skip_validation: true
+          client:
+            class_name: BaseTrueForge
+            filename: base_client.py
+            exported_class_name: TrueForge
+            exported_filename: client.py
+          pyproject_python_version: '>=3.10'
         smart-casing: true

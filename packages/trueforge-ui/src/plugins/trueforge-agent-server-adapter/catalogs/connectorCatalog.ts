@@ -23,6 +23,17 @@ export type UiConnectorCatalogEntry = ConnectorCatalogEntry;
 
 const DEFAULT_API_KEY_HEADER = 'Authorization';
 
+/** Prefixed Authorization values for MCP catalog servers that expect `Bearer …`. */
+function ensureBearerAuthorizationValue({ headerName, value }: { headerName: string; value: string }): string {
+  if (headerName.toLowerCase() !== DEFAULT_API_KEY_HEADER.toLowerCase()) {
+    return value;
+  }
+  if (/^bearer\s+/i.test(value)) {
+    return value;
+  }
+  return `Bearer ${value}`;
+}
+
 export function toUiAuthPublic(auth: TrueForgeApi.McpServerManifestAuth | undefined): UiConnectorAuthPublic {
   if (auth === undefined) {
     return { type: 'none' };
@@ -50,7 +61,10 @@ export function toHarnessAuth(auth: ConnectorAuth): TrueForgeApi.McpServerManife
   }
   const trimmedHeader = auth.headerName?.trim();
   const headerName = trimmedHeader !== undefined && trimmedHeader !== '' ? trimmedHeader : DEFAULT_API_KEY_HEADER;
-  return { type: 'header', headers: { [headerName]: apiKey } };
+  return {
+    type: 'header',
+    headers: { [headerName]: ensureBearerAuthorizationValue({ headerName, value: apiKey }) },
+  };
 }
 
 export function toUiCatalogEntry(server: TrueForgeApi.CatalogMcpServer): UiConnectorCatalogEntry {
@@ -64,10 +78,27 @@ export function toUiCatalogEntry(server: TrueForgeApi.CatalogMcpServer): UiConne
   };
 }
 
-export function toUiTool(tool: Record<string, unknown>): ToolBase {
+export type UiToolAnnotations = {
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+};
+
+function toUiToolAnnotations(value: unknown): UiToolAnnotations | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const readOnlyHint = Reflect.get(value, 'readOnlyHint');
+  const destructiveHint = Reflect.get(value, 'destructiveHint');
+  const annotations: UiToolAnnotations = {
+    ...(typeof readOnlyHint === 'boolean' ? { readOnlyHint } : {}),
+    ...(typeof destructiveHint === 'boolean' ? { destructiveHint } : {}),
+  };
+  return Object.keys(annotations).length > 0 ? annotations : undefined;
+}
+
+export function toUiTool(tool: Record<string, unknown>): ToolBase & { annotations?: UiToolAnnotations } {
   const name = typeof tool.name === 'string' && tool.name !== '' ? tool.name : 'tool';
   const description = typeof tool.description === 'string' ? tool.description : '';
-  return { id: name, name, description };
+  const annotations = toUiToolAnnotations(Reflect.get(tool, 'annotations'));
+  return annotations === undefined ? { id: name, name, description } : { id: name, name, description, annotations };
 }
 
 export function toUiConnector(server: TrueForgeApi.ConfiguredMcpServer): UiConnector {

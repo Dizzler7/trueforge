@@ -1,11 +1,46 @@
 # Default values for the trueforge chart.
-
-replicaCount: 1
+# Bitnami relocated its versioned container images to docker.io/bitnamilegacy and
+# left only rolling `latest` tags under docker.io/bitnami, so the subchart image
+# defaults no longer pull. We source pinned legacy images from the TrueFoundry
+# JFrog mirror instead. Overriding the registry trips Bitnami's image guardrail,
+# so allowInsecureImages must be set for the subcharts to render.
+global:
+  resourceTier: ""
+  security:
+    allowInsecureImages: true
+  # Custom CA trust, set here or inherited from a parent chart. Give an inline
+  # `certificate` or an `existingConfigMap.name` (key `ca-certificates.crt`);
+  # mounted over /etc/ssl/certs (overrideCAList) or merged with the system
+  # bundle by an initContainer. Sets NODE_EXTRA_CA_CERTS either way.
+  customCA:
+    enabled: false
+    certificate: ""
+    existingConfigMap:
+      name: ""
+      overrideCAList: false
+    image:
+      registry: tfy.jfrog.io
+      repository: tfy-mirror/alpine
+      tag: "3.21"
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 1001
+      runAsGroup: 1001
+      readOnlyRootFilesystem: true
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+    # Extra env for the initContainer only, e.g. SSL_CERT_FILE, REQUESTS_CA_BUNDLE.
+    env: {}
+    emptyDir:
+      sslCerts:
+        sizeLimit: 10Mi
 image:
   repository: tfy.jfrog.io/tfy-images/trueforge
   # Tag defaults to chart appVersion when empty. Prod chart-release PRs set this
   # to {appVersion}-{shortSha} for the npm-install image already in the registry.
-  tag: "0.1.4-fba492f"
+  tag: "0.2.0-8b1d98e"
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 # Default tfy.jfrog.io repos are anonymously pullable. Set secrets only when
@@ -17,8 +52,14 @@ serviceAccount:
   annotations: {}
   # If empty and create is true, a name is generated from the fullname.
   name: ""
+# Mount the ServiceAccount token into the server and controller pods.
+automountServiceAccountToken: false
 podAnnotations: {}
 podLabels: {}
+# Labels / annotations on every rendered object (merged over global.labels /
+# global.annotations when running as a subchart).
+commonLabels: {}
+commonAnnotations: {}
 podSecurityContext:
   runAsNonRoot: true
   runAsUser: 10001
@@ -34,14 +75,6 @@ securityContext:
       - ALL
 # Optional PriorityClass for the server pods.
 priorityClassName: ""
-# Rolling update controls (omit keys you do not want to set).
-strategy: {}
-# strategy:
-#   type: RollingUpdate
-#   rollingUpdate:
-#     maxUnavailable: 0
-#     maxSurge: 1
-
 service:
   type: ClusterIP
   port: 8790
@@ -50,10 +83,23 @@ service:
 # Server runtime configuration. Keys map to environment variables read in
 # packages/trueforge/src/config.ts.
 server:
+  # Number of server replicas (ignored when autoscaling.enabled is true).
+  # null = derived from the resource tier (small=1, medium=2, large=3),
+  # or 1 when no tier is set. Set a number to override the tier.
+  replicaCount: null
+  # Annotations on the server Deployment object (for example, Argo CD sync waves).
+  deploymentAnnotations: {}
+  # Rolling update strategy for the server Deployment.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   # Container port the server listens on (PORT).
   port: 8790
-  # Public origin for MCP OAuth / OIDC callbacks (PUBLIC_BASE_URL).
-  # Required for OIDC and MCP OAuth to work correctly.
+  # Public application URL for MCP OAuth / OIDC callbacks (PUBLIC_BASE_URL).
+  # May include a pathname (e.g. https://host/custom/proxy/path); that path is the UI/API
+  # public prefix when a reverse proxy strips it. Required for OIDC and MCP OAuth.
   publicBaseUrl: ""
   # Seconds the server is given to drain turns on SIGTERM (GRACEFUL_TIMEOUT_SECONDS).
   gracefulTimeoutSeconds: 30
@@ -61,6 +107,43 @@ server:
   # Escape hatch for knobs not covered by configs.*. Each entry is a full env
   # item: {name, value} or {name, valueFrom: {secretKeyRef|configMapKeyRef: ...}}.
   extraEnv: []
+# Schedule controller. A dedicated, single-replica Deployment that runs the
+# periodic control loops (schedule dispatch). It MUST run as exactly one replica
+# per database, so it is never autoscaled. It calls the server API over HTTP and
+# reuses the server's Postgres/Redis env; it exposes no port and no Service.
+controller:
+  # Set false to skip the controller Deployment (schedules will not fire).
+  enabled: true
+  # Annotations on the controller Deployment object (for example, Argo CD sync waves).
+  deploymentAnnotations: {}
+  # Container command. Runs the controller entry from the published package inside
+  # the image (root Dockerfile layout: /app/node_modules/@truefoundry/trueforge).
+  command:
+    - node
+    - node_modules/@truefoundry/trueforge/dist/controller-main.js
+  # Base URL the controller uses to reach the server (SERVER_URL).
+  # Empty → the in-cluster server Service (http(s)://<fullname>:<service.port>).
+  serverUrl: ""
+  # Extra env for the controller only; same item shape as server.extraEnv.
+  extraEnv: []
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+      ephemeral-storage: 128Mi
+    limits:
+      cpu: 100m
+      memory: 256Mi
+      ephemeral-storage: 256Mi
+# Controller → server API key (TRUEFORGE_API_KEY). Dev default is a known
+# placeholder — strongly recommended to create a Secret and set:
+#   apiKey: { valueFrom: { secretKeyRef: { name: trueforge-api-key, key: TRUEFORGE_API_KEY } } }
+# The chart never creates that Secret. A plain string also works for local trials.
+apiKey: "placeholder-value-please-generate-your-own"
+# Extra env for BOTH server and controller: name -> scalar or { valueFrom: ... }.
+# A key that matches a chart-computed variable (POSTGRES_HOST, PUBLIC_BASE_URL,
+# ...) replaces it in place. This is the extension point for a parent chart.
+env: {}
 # Application feature config (maps to env vars in packages/trueforge/src/config.ts).
 # clientSecret (and other secret-like fields) accept a string or
 # { valueFrom: { secretKeyRef: ... } }.
@@ -80,17 +163,17 @@ configs:
     #       name: trueforge-oidc
     #       key: client-secret
     userReferenceClaim: sub
+    userDisplayNameClaim: name
     userRoleClaim: groups
     adminRoleValue: admin
     scopes: "openid,profile,email"
-# Bitnami relocated its versioned container images to docker.io/bitnamilegacy and
-# left only rolling `latest` tags under docker.io/bitnami, so the subchart image
-# defaults no longer pull. We source pinned legacy images from the TrueFoundry
-# JFrog mirror instead. Overriding the registry trips Bitnami's image guardrail,
-# so allowInsecureImages must be set for the subcharts to render.
-global:
-  security:
-    allowInsecureImages: true
+    # Optional comma-separated exact emails and/or * globs (e.g. "*@company.com").
+    # Empty = unrestricted. Matched against the ID token `email` claim.
+    allowedEmails: ""
+# Resource tier: small | medium | large presets for server and controller.
+# Empty = use `resources` / `controller.resources`. Wins over a parent chart's
+# global.resourceTier.
+resourceTier: ""
 # --- Bundled Postgres (Bitnami subchart) ---------------------------------------
 # Rendered only when postgresql.enabled is true. The server's POSTGRES_* env is
 # wired to this release automatically. See the Bitnami postgresql chart for the
@@ -124,6 +207,7 @@ postgresql:
 redis:
   enabled: true
   architecture: standalone
+  nameOverride: trueforge-redis
   # The redis 24.0.0 subchart floats `latest`; pin a legacy tag mirrored to JFrog
   # for reproducibility (bitnamilegacy has no 8.4.x, so we track 8.2.x here).
   image:
@@ -137,36 +221,67 @@ redis:
       enabled: false
 # --- External services (used when the matching bundled dependency is disabled) -
 externalPostgres:
+  # host / port / database / user / password: inline scalar, or
+  # { valueFrom: { secretKeyRef: { name, key } } } (or configMapKeyRef).
+  # Required when postgresql.enabled is false. Defaults below are for a
+  # standalone install; a parent chart can replace any of them with valueFrom.
   host: ""
   port: 5432
   database: trueforge
   user: trueforge
-  # string, or { valueFrom: { secretKeyRef: { name, key } } }. Prefer valueFrom in prod.
   password: ""
-  # password:
+  # host / port / database / user / password:
   #   valueFrom:
   #     secretKeyRef:
   #       name: my-postgres-secret
-  #       key: password
+  #       key: host  # or port / database / user / password
+  # Optional TLS for the app → Postgres pool (`POSTGRES_SSL_MODE`). Empty = unset (no TLS).
+  # Modes: disable | prefer | require | verify-ca | verify-full | no-verify.
+  # prefer/require/verify-ca/verify-full all enable TLS with Node default verification
+  # (≈ verify-full). Use no-verify to encrypt without verifying the server cert.
+  sslMode: ""
+  # Optional client / CA TLS material. Mount the PEMs with extraVolumes / extraVolumeMounts,
+  # then set these to the in-pod paths.
+  sslCertPath: ""
+  sslKeyPath: ""
+  sslCaPath: ""
 externalRedis:
   # Full connection URL, e.g. redis://:password@redis-master.databases.svc:6379.
   # string, or { valueFrom: { secretKeyRef: { name, key } } }. Prefer valueFrom in prod.
   url: ""
+  # Redis Sentinel connection settings, injected as REDIS_SENTINEL_* env.
   # url:
   #   valueFrom:
   #     secretKeyRef:
   #       name: my-redis-secret
   #       key: redis-url
+  sentinel:
+    enabled: false
+    # Comma-separated host:port list -> REDIS_SENTINEL_HOSTS.
+    hosts: ""
+    # Monitored master name -> REDIS_SENTINEL_MASTER_NAME.
+    masterName: ""
+    # string or valueFrom -> REDIS_SENTINEL_PASSWORD.
+    password: ""
+# --- Bundled dev sandbox server (tfy-sandbox-server subchart) -------------------
+# Managed by the parent chart; off for standalone installs. When true, the
+# subchart is deployed and the app gets TRUEFOUNDRY_SANDBOX_* env pointing at it.
+truefoundry:
+  devSandboxServerEnabled: false
+tfy-sandbox-server:
+  # Keeps the rendered names distinct from any other sandbox server in the
+  # namespace: <release>-trueforge-tfy-sandbox-server.
+  nameOverride: trueforge-tfy-sandbox-server
 # Extra raw manifests deployed alongside the server, e.g. an Istio
 # VirtualService, a Gateway, an Ingress, or a NetworkPolicy. Each entry is a
 # full Kubernetes object rendered through `tpl`, so Helm templating works and
-# helpers like `{{ include "trueforge.fullname" . }}` resolve. Example:
+# helpers like `{{ include "trueforge.server.fullname" . }}` resolve. Example:
 #
 # extraObjects:
 #   - apiVersion: networking.istio.io/v1
 #     kind: VirtualService
 #     metadata:
-#       name: '{{ include "trueforge.fullname" . }}'
+#       name: '{{ include "trueforge.server.fullname" . }}'
 #     spec:
 #       hosts:
 #         - trueforge.example.com
@@ -175,7 +290,7 @@ externalRedis:
 #       http:
 #         - route:
 #             - destination:
-#                 host: '{{ include "trueforge.fullname" . }}'
+#                 host: '{{ include "trueforge.server.fullname" . }}'
 #                 port:
 #                   number: '{{ .Values.service.port }}'
 extraObjects: []
@@ -194,6 +309,13 @@ resources:
     cpu: 200m
     memory: 512Mi
     ephemeral-storage: 512Mi
+# Mutual TLS for the server HTTPS listener and controller→server hop.
+# When enabled, chart probes use scheme HTTPS (same pattern as deltafusion-ingestor).
+# Secret must contain tls.crt / tls.key / ca.crt (e.g. truefoundry-internal-tls).
+mtls:
+  enabled: false
+  secretName: ""
+  certsDir: /etc/tls
 # startupProbe runs until success before liveness/readiness; sized for migrate + Redis connect.
 startupProbe:
   httpGet:
@@ -224,7 +346,9 @@ autoscaling:
   maxReplicas: 5
   targetCPUUtilizationPercentage: 80
 podDisruptionBudget:
-  enabled: false
+  # Rendered only when the server runs more than one replica, so single-replica
+  # installs never block node drains.
+  enabled: true
   # Exactly one of minAvailable or maxUnavailable is required when enabled.
   # Default keeps at least one pod available during voluntary disruptions.
   minAvailable: 1
@@ -232,4 +356,6 @@ podDisruptionBudget:
 nodeSelector: {}
 tolerations: []
 affinity: {}
+# Empty = server pods spread across nodes (maxSkew 1, ScheduleAnyway). Set to
+# override; entries apply verbatim to both server and controller pods.
 topologySpreadConstraints: []

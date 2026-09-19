@@ -71,7 +71,7 @@ export function DraftReasoningEffortSelector({ disabled, isRunning }: DraftReaso
   const content = (
     <>
       <div className="border-b border-border px-3 py-2">
-        <p className="text-text-primary text-sm font-semibold">Reasoning effort</p>
+        <p className="text-text-primary text-sm font-normal">Reasoning effort</p>
       </div>
       <div
         id={menuId}
@@ -105,7 +105,7 @@ export function DraftReasoningEffortSelector({ disabled, isRunning }: DraftReaso
                 setOpen(false);
               }}
             >
-              <span className="truncate font-medium">{effort}</span>
+              <span className="truncate font-normal">{effort}</span>
             </button>
           );
         })}
@@ -124,7 +124,7 @@ export function DraftReasoningEffortSelector({ disabled, isRunning }: DraftReaso
         title="Select reasoning effort"
         className={auiButtonClass({
           variant: 'ghost',
-          size: 'sm',
+          size: 'small',
           className: cn(
             'h-8 max-w-[10rem] gap-1.5 rounded-full px-2 text-xs font-medium',
             'hover:bg-ghost-button-hover',
@@ -142,7 +142,7 @@ export function DraftReasoningEffortSelector({ disabled, isRunning }: DraftReaso
             {content}
           </BottomSheet>
         ) : (
-          <div className="bg-card-bg text-text-primary absolute right-0 bottom-full z-50 mb-2 flex max-h-[22rem] w-[12rem] flex-col overflow-hidden rounded-lg border border-border shadow-lg">
+          <div className="aui-popup-enter bg-card-bg text-text-primary absolute right-0 bottom-full z-50 mb-2 flex max-h-[22rem] w-[12rem] flex-col overflow-hidden rounded-lg border border-border shadow-lg">
             {content}
           </div>
         )

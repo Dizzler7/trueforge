@@ -1,3 +1,4 @@
+import type { SessionMetrics } from '@truefoundry/trueforge-core/agent-session';
 import type { TurnRecord, TurnSnapshot } from '@truefoundry/trueforge-core/agent-session/models/TurnRecord';
 import {
   type TerminalTurnState,
@@ -71,6 +72,7 @@ export interface CreateTurnTurnFields {
   first_turn_id: string;
   previous_turn_id: string | null;
   ancestor_ids: string[];
+  active_executor_id: string;
   input: TurnInputItem[];
   state: TurnState;
   custom: Record<string, unknown> | null;
@@ -108,6 +110,35 @@ export interface ListTurnsResult {
 }
 
 type DbOrTrx = Kysely<Database> | Transaction<Database>;
+
+/** Same tx as the turn flip; BEGIN IMMEDIATE serializes concurrent terminal folds. */
+async function addSessionCostAndDuration(
+  trx: Transaction<Database>,
+  input: { session_id: string; turn_created_at: Date; turn_state: TerminalTurnState },
+): Promise<void> {
+  const elapsed_ms = Date.parse(input.turn_state.completed_at) - input.turn_created_at.getTime();
+  const total_duration_ms = elapsed_ms > 0 ? Math.trunc(elapsed_ms) : 0;
+  const turnCost = input.turn_state.metrics?.total_cost_in_usd;
+  const withDuration = sql<SessionMetrics>`jsonb_set(
+    metrics,
+    '$.total_duration_ms',
+    jsonb((metrics->>'total_duration_ms') + ${total_duration_ms})
+  )`;
+  await trx
+    .updateTable('session')
+    .set({
+      metrics:
+        turnCost === undefined
+          ? withDuration
+          : sql<SessionMetrics>`jsonb_set(
+              ${withDuration},
+              '$.total_cost_in_usd',
+              jsonb(COALESCE(metrics->>'total_cost_in_usd', 0) + ${turnCost})
+            )`,
+    })
+    .where('session_id', '=', input.session_id)
+    .execute();
+}
 
 function terminalTurnState(state: TurnState, turn_id: string): TerminalTurnState {
   switch (state.status) {
@@ -179,6 +210,7 @@ async function assembleTurnRecord(
       'turn_id',
       'first_turn_id',
       'previous_turn_id',
+      'active_executor_id',
       jsonText<string[]>(sql.ref('ancestor_ids')).as('ancestor_ids'),
       jsonText<TurnInputItem[]>(sql.ref('input')).as('input'),
       jsonText<TurnState>(sql.ref('state')).as('state'),
@@ -300,6 +332,7 @@ async function assembleTurnRecord(
     first_turn_id: turn.first_turn_id,
     ancestor_ids: turn.ancestor_ids,
     previous_turn_id: turn.previous_turn_id,
+    active_executor_id: turn.active_executor_id,
     state: turn.state,
     input: turn.input,
     snapshot,
@@ -334,6 +367,8 @@ export async function createTurn(db: Kysely<Database>, input: CreateTurnInput): 
           last_turn_id: input.turn.turn_id,
           updated_at: nowIso(),
           last_activity_timestamp_ms: input.last_activity_timestamp_ms,
+          // total_turns rides the same tip UPDATE so a later failure in this tx rolls it back.
+          metrics: sql`jsonb_set(metrics, '$.total_turns', jsonb((metrics->>'total_turns') + 1))`,
         })
         .where('session_id', '=', input.session_id);
 
@@ -437,6 +472,7 @@ export async function createTurn(db: Kysely<Database>, input: CreateTurnInput): 
           first_turn_id: input.turn.first_turn_id,
           previous_turn_id: input.turn.previous_turn_id ?? null,
           ancestor_ids: jsonbBind(input.turn.ancestor_ids),
+          active_executor_id: input.turn.active_executor_id,
           input: jsonbBind(input.turn.input),
           state: jsonbBind(input.turn.state),
           checkpoint: jsonbBind(checkpoint),
@@ -669,9 +705,10 @@ export async function freezeAndGetTurn(db: Kysely<Database>, input: FreezeAndGet
       .where('session_id', '=', input.session_id)
       .where('turn_id', '=', input.turn_id)
       .where(sql<boolean>`state->>'status' = 'running'`)
+      .returning(['created_at'])
       .executeTakeFirst();
 
-    if (Number(updateResult.numUpdatedRows) > 0) {
+    if (updateResult !== undefined) {
       await trx
         .insertInto('session_event')
         .values({
@@ -682,6 +719,12 @@ export async function freezeAndGetTurn(db: Kysely<Database>, input: FreezeAndGet
           created_at: input.turn_done_event.created_at,
         })
         .execute();
+      // Only the winning cancel folds; a freeze of an already-terminal turn is a read.
+      await addSessionCostAndDuration(trx, {
+        session_id: input.session_id,
+        turn_created_at: new Date(updateResult.created_at),
+        turn_state: cancelledState,
+      });
     }
 
     const record = await assembleTurnRecord(trx, input);
@@ -715,6 +758,7 @@ export async function listTurns(db: Kysely<Database>, input: ListTurnsInput): Pr
       'turn_id',
       'first_turn_id',
       'previous_turn_id',
+      'active_executor_id',
       jsonText<string[]>(sql.ref('ancestor_ids')).as('ancestor_ids'),
       jsonText<TurnInputItem[]>(sql.ref('input')).as('input'),
       jsonText<TurnState>(sql.ref('state')).as('state'),
@@ -738,6 +782,7 @@ export async function listTurns(db: Kysely<Database>, input: ListTurnsInput): Pr
     first_turn_id: row.first_turn_id,
     ancestor_ids: row.ancestor_ids,
     previous_turn_id: row.previous_turn_id,
+    active_executor_id: row.active_executor_id,
     state: row.state,
     input: row.input,
     created_at: new Date(row.created_at),
@@ -766,10 +811,11 @@ export async function updateTurnState(db: Kysely<Database>, input: UpdateTurnSta
       .where('session_id', '=', input.session_id)
       .where('turn_id', '=', input.turn_id)
       .where(sql<boolean>`state->>'status' = 'running'`)
+      .returning(['created_at'])
       .executeTakeFirst();
 
-    const numUpdated = Number(result.numUpdatedRows);
-    if (numUpdated === 0) {
+    // No RETURNING row: UPDATE matched 0 running turns.
+    if (result === undefined) {
       const existing = await trx
         .selectFrom('turn')
         .select([jsonText<TurnState>(sql.ref('state')).as('state')])
@@ -782,6 +828,12 @@ export async function updateTurnState(db: Kysely<Database>, input: UpdateTurnSta
       }
       throw new TurnNotRunningError(input.turn_id, terminalTurnState(existing.state, input.turn_id));
     }
+
+    await addSessionCostAndDuration(trx, {
+      session_id: input.session_id,
+      turn_created_at: new Date(result.created_at),
+      turn_state: input.state,
+    });
 
     await trx
       .insertInto('session_event')

@@ -3,6 +3,8 @@ import { Daytona, DaytonaError } from '@daytona/sdk';
 import {
   DaytonaSandboxProvider,
   SANDBOX_IMAGE_URI,
+  TFYSandboxProvider,
+  withTimeout,
   type SandboxBuild,
   type SandboxProvider,
 } from '@truefoundry/trueforge-core/core';
@@ -17,16 +19,21 @@ import {
   type SandboxBuildMetadata,
   type SandboxProviderManifest,
   type SandboxStatus,
+  type StoredSandboxProviderManifest,
 } from '../schemas/sandboxProvider';
 import { DockerSandboxProvider } from './docker/provider/DockerSandboxProvider';
 
-/** Daytona rejected the credentials (401 unauthorized / 403 forbidden); retrying the same key cannot succeed. */
+/** Daytona rejected the credentials (401 unauthorized); retrying the same key cannot succeed. */
 export function isDaytonaAuthError(error: unknown): boolean {
-  return error instanceof DaytonaError && (error.statusCode === 401 || error.statusCode === 403);
+  return error instanceof DaytonaError && error.statusCode === 401;
+}
+
+export function isDaytonaPermissionError(error: unknown): boolean {
+  return error instanceof DaytonaError && error.statusCode === 403;
 }
 
 /**
- * Builds the runtime provider for a stored manifest. No network I/O until a method is called.
+ * Builds the Daytona runtime provider for a stored Daytona manifest. No network I/O until a method is called.
  *
  * When `build_metadata` is present, pin both `sandboxImage` and `buildRef` to what was actually
  * built — image bumps in the running binary must not rewrite an existing tenant onto a new
@@ -74,10 +81,6 @@ function toDockerSandboxProvider({
 /**
  * Builds the runtime provider for a stored manifest, whichever backend it names.
  * No network or socket I/O until a method is called.
- *
- * `build_metadata` is Daytona-specific (it pins a built snapshot); the container
- * backend has no equivalent because the image tag in the manifest already
- * identifies exactly what runs.
  */
 export function toSandboxProvider({
   manifest,
@@ -85,7 +88,7 @@ export function toSandboxProvider({
   logger,
   build_metadata,
 }: {
-  manifest: SandboxProviderManifest;
+  manifest: StoredSandboxProviderManifest;
   tenant_id: string;
   logger: Logger;
   build_metadata?: SandboxBuildMetadata | null;
@@ -100,7 +103,37 @@ export function toSandboxProvider({
       });
     case 'docker':
       return toDockerSandboxProvider({ manifest, logger });
+    case 'truefoundry':
+      return new TFYSandboxProvider({
+        serverUrl: manifest.server_url,
+        natsBridgeUrl: manifest.nats_bridge_url,
+        tenantName: tenant_id,
+        fileMaxBytesForDownload: configuration.SANDBOX_FILE_MAX_BYTES_FOR_DOWNLOAD,
+        defaultExecTimeoutMs: manifest.exec_timeout_ms,
+        logger,
+      });
   }
+}
+
+/**
+ * Builds the runtime SandboxProvider for a store record. One switch on `manifest.type`.
+ * No network I/O until a provider method is called.
+ */
+export function toSandboxProviderFromRecord({
+  record,
+  tenant_id,
+  logger,
+}: {
+  record: SandboxProviderRecord;
+  tenant_id: string;
+  logger: Logger;
+}): SandboxProvider {
+  return toSandboxProvider({
+    manifest: record.manifest,
+    tenant_id,
+    logger,
+    build_metadata: record.build_metadata,
+  });
 }
 
 /** Maps a core `SandboxBuild` onto the persisted/wire status shape (metadata passes through). */
@@ -123,6 +156,9 @@ function sandboxStatusFromRecord(record: SandboxProviderRecord): SandboxStatus {
 // Daytona deactivates idle snapshots after 14 days; revalidate at 13 to stay a day ahead.
 const READY_REVALIDATE_INTERVAL_MS = 13 * 24 * 60 * 60 * 1000;
 
+/** Cap the Daytona round-trip for the refresh, which runs outside a transaction. */
+const STATUS_REFRESH_TIMEOUT_MS = 60_000;
+
 export async function checkSnapshotStatus({
   store,
   tenant_id,
@@ -139,6 +175,11 @@ export async function checkSnapshotStatus({
 
   const persisted = sandboxStatusFromRecord(record);
 
+  // Prebuilt image — no snapshot registration or refresh.
+  if (record.manifest.type === 'truefoundry') {
+    return persisted;
+  }
+
   const readyIsFresh =
     record.status === 'ready' && Date.now() - Date.parse(record.updated_at) < READY_REVALIDATE_INTERVAL_MS;
   if (record.status === 'failed' || readyIsFresh) {
@@ -154,9 +195,9 @@ export async function checkSnapshotStatus({
   let build: SandboxBuild;
   if (record.status === 'ready') {
     // this is because image may have deactivated
-    build = await provider.buildImage();
+    build = await withTimeout(provider.buildImage(), STATUS_REFRESH_TIMEOUT_MS, 'sandbox buildImage');
   } else {
-    build = await provider.getImageBuildStatus();
+    build = await withTimeout(provider.getImageBuildStatus(), STATUS_REFRESH_TIMEOUT_MS, 'sandbox getImageBuildStatus');
   }
   const next = toSandboxStatus(build);
   const updated = await store.updateSandboxStatus({ tenant_id, ...next });

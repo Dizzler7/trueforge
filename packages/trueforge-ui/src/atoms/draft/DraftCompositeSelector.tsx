@@ -8,20 +8,24 @@ import { Icon } from '../../icons/Icon.js';
 import { useOptionalCatalogServer, useServerCapabilities } from '../../server/ServerContext.js';
 import { useOptionalShellMode, type SettingsSection } from '../../server/ShellModeContext.js';
 import type { AgentSkill, ConnectorState } from '../../server/types.js';
+import { useSlot } from '../../theme/SlotsProvider.js';
 import { auiButtonClass } from '../lib/buttonClasses.js';
 import { cn } from '../lib/cn.js';
 import { useCompactLayout } from '../lib/CompactLayoutContext.js';
 import { auiInputClass } from '../lib/inputClasses.js';
 import { useIsMobile } from '../lib/useIsMobile.js';
 import { BottomSheet } from '../primitives/BottomSheet.js';
+import { Button } from '../primitives/Button.js';
+import { CatalogLogo } from '../primitives/CatalogLogo.js';
+import { Checkbox } from '../primitives/Checkbox.js';
 import { Tooltip } from '../primitives/Tooltip.js';
-import { readAgentCapabilities, withAgentCapabilities } from './agentCapabilities.js';
-import { DraftCapabilitiesPanel } from './DraftCapabilitiesPanel.js';
 import { DraftCatalogEmptyState } from './DraftCatalogEmptyState.js';
 import { useDraftCatalog } from './DraftCatalogProvider.js';
+import { connectorsWithSelectedStubs } from './mcpConnectorStubs.js';
+import { skillFamilyId, skillRepoName } from './SkillVersionSelector.js';
 
 /** Catalog-backed mount shape used by the draft picker (runtime mounts stay opaque). */
-export type DraftMount = { id: string; name: string };
+export type DraftMount = { id: string; name: string; preload?: boolean };
 
 /**
  * Harness wire mounts are name-keyed (`{ name }` only). Catalog rows use
@@ -36,80 +40,109 @@ export function draftMountsFromSpec(value: unknown): DraftMount[] {
     const name = Reflect.get(item, 'name');
     if (typeof name !== 'string') continue;
     const id = Reflect.get(item, 'id');
-    mounts.push({ id: typeof id === 'string' ? id : name, name });
+    const displayName = Reflect.get(item, 'display_name');
+    const preload = Reflect.get(item, 'preload');
+    mounts.push({
+      id: typeof id === 'string' ? id : name,
+      name: typeof displayName === 'string' ? displayName : name,
+      ...(typeof preload === 'boolean' ? { preload } : {}),
+    });
   }
   return mounts;
 }
-type AttachTab = 'connectors' | 'skills' | 'capabilities';
+type AttachTab = 'connectors' | 'skills';
 
 const TABS: { id: AttachTab; label: string; icon: string }[] = [
   { id: 'connectors', label: 'Connectors', icon: 'plug' },
   { id: 'skills', label: 'Skills', icon: 'lightbulb' },
-  { id: 'capabilities', label: 'Capabilities', icon: 'wrench' },
 ];
 
 const SPEC_FLUSH_MS = 300;
 
-function Checkbox({ checked }: { checked: boolean }) {
-  return (
-    <span
-      className={cn(
-        'flex size-4 shrink-0 items-center justify-center rounded border',
-        checked
-          ? 'border-primary-button-bg bg-primary-button-bg text-primary-button-text'
-          : 'border-input-border bg-input-box-bg',
-      )}
-      aria-hidden
-    >
-      {checked ? <Icon name="check" className="size-3" /> : null}
-    </span>
-  );
-}
-
 export function CatalogRow({
   title,
   description,
+  badge,
+  logo,
+  fallbackIcon,
   checked,
   disabled = false,
   onToggle,
+  onActivate,
   action,
 }: {
   title: string;
   description?: string;
+  badge?: ReactNode;
+  /** Catalog logo URL; when absent, `fallbackIcon` (or the title initial) is shown. */
+  logo?: string | undefined;
+  fallbackIcon?: string;
   checked: boolean;
   disabled?: boolean;
   onToggle: () => void;
+  onActivate?: () => void;
   action?: ReactNode;
 }) {
   const content = (
     <>
-      <span className="bg-secondary-bg text-text-secondary mt-0.5 flex size-7 shrink-0 items-center justify-center rounded text-xs font-semibold">
-        {title.charAt(0).toUpperCase()}
+      <span
+        className="bg-secondary-bg text-text-secondary mt-0.5 flex size-7 shrink-0 items-center justify-center overflow-hidden rounded border border-border text-xs font-semibold"
+        aria-hidden
+      >
+        {logo ? (
+          <CatalogLogo src={logo} alt={title} className="size-4" />
+        ) : fallbackIcon ? (
+          <Icon name={fallbackIcon} className="text-text-primary size-4" />
+        ) : (
+          title.charAt(0).toUpperCase()
+        )}
       </span>
       <span className="min-w-0 flex-1">
-        <span className="text-text-primary block truncate text-sm font-medium">{title}</span>
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="text-text-primary truncate text-sm font-medium">{title}</span>
+          {badge}
+        </span>
         {description ? <span className="text-text-secondary line-clamp-1 text-xs">{description}</span> : null}
       </span>
     </>
   );
 
-  if (action) {
+  if (action || onActivate) {
     return (
       <div
         role="menuitemcheckbox"
         aria-checked={checked}
         tabIndex={0}
         className="hover:bg-ghost-button-hover flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-left"
-        onClick={onToggle}
+        onClick={onActivate ?? onToggle}
         onKeyDown={event => {
           if (event.key !== 'Enter' && event.key !== ' ') return;
           event.preventDefault();
-          onToggle();
+          (onActivate ?? onToggle)();
         }}
       >
         {content}
-        <span className="shrink-0">{action}</span>
-        <Checkbox checked={checked} />
+        <span
+          className="shrink-0"
+          onClick={event => event.stopPropagation()}
+          onKeyDown={event => event.stopPropagation()}
+        >
+          {action}
+        </span>
+        <button
+          type="button"
+          role="checkbox"
+          aria-checked={checked}
+          aria-label={`${checked ? 'Deselect' : 'Select'} ${title}`}
+          disabled={disabled}
+          className="shrink-0 disabled:cursor-not-allowed disabled:opacity-50"
+          onClick={event => {
+            event.stopPropagation();
+            onToggle();
+          }}
+        >
+          <Checkbox checked={checked} />
+        </button>
       </div>
     );
   }
@@ -149,11 +182,11 @@ export function ConnectorConnectButton({
   const { handleAuthorize, isOAuthLoading } = useMCPAuth();
 
   return (
-    <button
+    <Button.Secondary
       type="button"
       aria-label={`Connect ${connector.name}`}
       disabled={isOAuthLoading}
-      className={auiButtonClass({ variant: 'secondary', size: 'sm' })}
+      size="small"
       onKeyDown={event => {
         event.stopPropagation();
       }}
@@ -165,7 +198,7 @@ export function ConnectorConnectButton({
       }}
     >
       {isOAuthLoading ? 'Connecting...' : 'Connect'}
-    </button>
+    </Button.Secondary>
   );
 }
 
@@ -203,14 +236,15 @@ export type DraftCompositeSelectorProps = {
 
 function SectionHeading({ label, count }: { label: string; count: number }) {
   return (
-    <div className="text-text-secondary px-3 pt-2 pb-1 text-[11px] font-medium tracking-wide uppercase">
+    <div className="text-text-secondary px-3 pt-2 pb-1 text-[0.6875rem] font-medium tracking-wide uppercase">
       {label} ({count})
     </div>
   );
 }
 
 export function DraftCompositeSelector({ disabled, isRunning, onAttach }: DraftCompositeSelectorProps) {
-  const { skills, connectors, loading, ensureLoaded, refreshConnectors } = useDraftCatalog();
+  const DraftComposerActionsMenu = useSlot('DraftComposerActionsMenu');
+  const { skills, connectors, connectorLogos, loading, ensureLoaded, refreshConnectors } = useDraftCatalog();
   const capabilities = useServerCapabilities();
   const settingsCatalog = useOptionalCatalogServer();
   const shell = useOptionalShellMode();
@@ -250,7 +284,6 @@ export function DraftCompositeSelector({ disabled, isRunning, onAttach }: DraftC
   const selectedMcp = open ? localMcp : specMcp;
   const selectedSkills = open ? localSkills : specSkills;
   const selectedMcpIds = useMemo(() => new Set(selectedMcp.map(m => m.id)), [selectedMcp]);
-  const selectedSkillIds = useMemo(() => new Set(selectedSkills.map(s => s.id)), [selectedSkills]);
   const hasValidModel = Boolean(agentSpec?.model?.name.trim());
   const toolsCount = selectedMcp.length + selectedSkills.length;
   const toolsTooltip = useMemo(() => {
@@ -331,23 +364,31 @@ export function DraftCompositeSelector({ disabled, isRunning, onAttach }: DraftC
 
   useEffect(() => () => clearFlushTimer(), [clearFlushTimer]);
 
+  const catalogConnectors = useMemo(
+    () => connectorsWithSelectedStubs({ connectors, selected: selectedMcp }),
+    [connectors, selectedMcp],
+  );
+
   const filteredConnectors = useMemo(() => {
     const needle = query.trim().toLowerCase();
     const matches = needle
-      ? connectors.filter(
+      ? catalogConnectors.filter(
           c => c.name.toLowerCase().includes(needle) || (c.description?.toLowerCase().includes(needle) ?? false),
         )
-      : connectors;
+      : catalogConnectors;
     return [...matches].sort(
       (left, right) => Number(isUnauthenticatedDcrConnector(left)) - Number(isUnauthenticatedDcrConnector(right)),
     );
-  }, [connectors, query]);
+  }, [catalogConnectors, query]);
 
   const filteredSkills = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) return skills;
     return skills.filter(
-      s => s.name.toLowerCase().includes(needle) || (s.description?.toLowerCase().includes(needle) ?? false),
+      skill =>
+        skill.name.toLowerCase().includes(needle) ||
+        (skillRepoName(skill)?.toLowerCase().includes(needle) ?? false) ||
+        (skill.description?.toLowerCase().includes(needle) ?? false),
     );
   }, [skills, query]);
 
@@ -360,11 +401,11 @@ export function DraftCompositeSelector({ disabled, isRunning, onAttach }: DraftC
     [filteredConnectors, pinnedMcpIds],
   );
   const pinnedSelectedSkills = useMemo(
-    () => filteredSkills.filter(s => pinnedSkillIds.has(s.id)),
+    () => filteredSkills.filter(s => pinnedSkillIds.has(skillFamilyId(s.id))),
     [filteredSkills, pinnedSkillIds],
   );
   const pinnedAvailableSkills = useMemo(
-    () => filteredSkills.filter(s => !pinnedSkillIds.has(s.id)),
+    () => filteredSkills.filter(s => !pinnedSkillIds.has(skillFamilyId(s.id))),
     [filteredSkills, pinnedSkillIds],
   );
 
@@ -379,13 +420,45 @@ export function DraftCompositeSelector({ disabled, isRunning, onAttach }: DraftC
   };
 
   const toggleSkill = (skill: AgentSkill) => {
-    setLocalSkills(prev =>
-      prev.some(s => s.id === skill.id)
-        ? prev.filter(s => s.id !== skill.id)
-        : [...prev, { id: skill.id, name: skill.name }],
+    const family = skillFamilyId(skill.id);
+    const adding = !localSkillsRef.current.some(item => skillFamilyId(item.id) === family);
+    setLocalSkills(previous =>
+      previous.some(item => skillFamilyId(item.id) === family)
+        ? previous.filter(item => skillFamilyId(item.id) !== family)
+        : [...previous, { id: skill.id, name: skill.name }],
     );
+    if (adding && capabilities?.sandbox.enabled === true) {
+      updateAgentSpec?.({
+        config: {
+          ...agentSpec?.config,
+          sandbox: { ...agentSpec?.config?.sandbox, enabled: true },
+        },
+      });
+    }
     dirtyRef.current = true;
     scheduleFlush();
+  };
+
+  const renderSkill = (skill: AgentSkill) => {
+    const selected = selectedSkills.find(mount => skillFamilyId(mount.id) === skillFamilyId(skill.id));
+    const repoName = skillRepoName(skill);
+    return (
+      <CatalogRow
+        key={skill.id}
+        title={skill.name}
+        description={skill.description}
+        badge={
+          repoName === undefined ? undefined : (
+            <span className="bg-primary-button-bg/10 text-primary-button-bg shrink-0 rounded-full px-1.5 py-0.5 text-[0.625rem]">
+              {repoName}
+            </span>
+          )
+        }
+        checked={selected !== undefined}
+        disabled={skillsDisabled && selected === undefined}
+        onToggle={() => toggleSkill(skill)}
+      />
+    );
   };
 
   const openPicker = (nextTab?: AttachTab) => {
@@ -399,7 +472,7 @@ export function DraftCompositeSelector({ disabled, isRunning, onAttach }: DraftC
     dirtyRef.current = false;
     clearFlushTimer();
     setPinnedMcpIds(new Set(specMcp.map(m => m.id)));
-    setPinnedSkillIds(new Set(specSkills.map(s => s.id)));
+    setPinnedSkillIds(new Set(specSkills.map(skill => skillFamilyId(skill.id))));
     setOpen(true);
   };
 
@@ -431,159 +504,143 @@ export function DraftCompositeSelector({ disabled, isRunning, onAttach }: DraftC
               <Icon name={t.icon} className="size-3.5" />
               {t.label}
               {count != null && count > 0 ? (
-                <span className="bg-secondary-bg rounded px-1 text-[10px]">{count}</span>
+                <span className="bg-secondary-bg rounded px-1 text-[0.625rem]">{count}</span>
               ) : null}
             </button>
           );
         })}
       </div>
 
-      {tab === 'capabilities' ? (
-        <div className="min-h-0 flex-1 overflow-y-auto p-2">
-          <DraftCapabilitiesPanel
-            value={readAgentCapabilities(agentSpec?.config)}
-            disabled={disabled || isRunning}
-            onChange={values => {
-              // Capability writes bypass the mount debounce. Fold in any dirty
-              // local mounts in the same update so a pending connector/skill
-              // toggle is not overwritten by a config-only sync.
-              clearFlushTimer();
-              const includeLocalMounts = dirtyRef.current;
-              if (includeLocalMounts) {
-                dirtyRef.current = false;
-              }
-              updateAgentSpec?.({
-                ...(includeLocalMounts ? { mcpServers: localMcpRef.current, skills: localSkillsRef.current } : {}),
-                config: withAgentCapabilities({ config: agentSpec?.config, values }),
-              });
-            }}
-          />
-        </div>
-      ) : (
-        <>
-          <SearchField
-            value={query}
-            onChange={setQuery}
-            placeholder={tab === 'connectors' ? 'Search connectors...' : 'Search skills...'}
-          />
-          {tab === 'skills' && skillsDisabled && skillsDisabledReason ? (
-            <div
-              role="status"
-              className="border-primary-button-bg/30 bg-primary-button-bg/5 text-text-primary mx-3 mb-2 flex items-center gap-2 rounded-lg border p-3"
-            >
-              <Icon name="lock" className="text-primary-button-bg size-3 shrink-0" />
-              <span className="text-xs leading-none">{skillsDisabledReason}</span>
-            </div>
-          ) : null}
-          <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-2">
-            {tab === 'connectors' ? (
-              <>
-                {pinnedSelectedConnectors.length > 0 ? (
-                  <>
-                    <SectionHeading label="Selected" count={pinnedSelectedConnectors.length} />
-                    {pinnedSelectedConnectors.map(c => (
-                      <CatalogRow
-                        key={c.id}
-                        title={c.name}
-                        description={c.description}
-                        checked={selectedMcpIds.has(c.id)}
-                        action={
-                          isUnauthenticatedDcrConnector(c) ? (
-                            <ConnectorConnectButton connector={c} onConnected={refreshConnectors} />
-                          ) : undefined
-                        }
-                        onToggle={() => toggleConnector(c)}
-                      />
-                    ))}
-                  </>
-                ) : null}
-                {pinnedAvailableConnectors.length > 0 ? (
-                  <>
-                    <SectionHeading label="Available" count={pinnedAvailableConnectors.length} />
-                    {pinnedAvailableConnectors.map(c => (
-                      <CatalogRow
-                        key={c.id}
-                        title={c.name}
-                        description={c.description}
-                        checked={selectedMcpIds.has(c.id)}
-                        action={
-                          isUnauthenticatedDcrConnector(c) ? (
-                            <ConnectorConnectButton connector={c} onConnected={refreshConnectors} />
-                          ) : undefined
-                        }
-                        onToggle={() => toggleConnector(c)}
-                      />
-                    ))}
-                  </>
-                ) : null}
-                {filteredConnectors.length === 0 ? (
-                  <DraftCatalogEmptyState
-                    loading={loading}
-                    emptyLabel="No connectors"
-                    settingsTarget="Connectors"
-                    onOpenSettings={
-                      connectors.length === 0 && shell && canConfigureConnectors
-                        ? () => openSettings('connectors')
-                        : undefined
-                    }
-                  />
-                ) : null}
-              </>
-            ) : (
-              <>
-                {pinnedSelectedSkills.length > 0 ? (
-                  <>
-                    <SectionHeading label="Selected" count={pinnedSelectedSkills.length} />
-                    {pinnedSelectedSkills.map(s => (
-                      <CatalogRow
-                        key={s.id}
-                        title={s.name}
-                        description={s.description}
-                        checked={selectedSkillIds.has(s.id)}
-                        disabled={skillsDisabled && !selectedSkillIds.has(s.id)}
-                        onToggle={() => toggleSkill(s)}
-                      />
-                    ))}
-                  </>
-                ) : null}
-                {pinnedAvailableSkills.length > 0 ? (
-                  <>
-                    <SectionHeading label="Available" count={pinnedAvailableSkills.length} />
-                    {pinnedAvailableSkills.map(s => (
-                      <CatalogRow
-                        key={s.id}
-                        title={s.name}
-                        description={s.description}
-                        checked={selectedSkillIds.has(s.id)}
-                        disabled={skillsDisabled && !selectedSkillIds.has(s.id)}
-                        onToggle={() => toggleSkill(s)}
-                      />
-                    ))}
-                  </>
-                ) : null}
-                {filteredSkills.length === 0 ? (
-                  <DraftCatalogEmptyState
-                    loading={loading}
-                    emptyLabel="No skills"
-                    settingsTarget={needsSandbox ? 'a Sandbox' : 'Skills'}
-                    onOpenSettings={
-                      skills.length === 0 && shell && (needsSandbox ? canConfigureSandbox : canConfigureSkills)
-                        ? () => openSettings(needsSandbox ? 'sandbox' : 'skills')
-                        : undefined
-                    }
-                  />
-                ) : null}
-              </>
-            )}
+      <>
+        <SearchField
+          value={query}
+          onChange={setQuery}
+          placeholder={tab === 'connectors' ? 'Search connectors...' : 'Search skills...'}
+        />
+        {tab === 'skills' && skillsDisabled && skillsDisabledReason ? (
+          <div
+            role="status"
+            className="border-primary-button-bg/30 bg-primary-button-bg/5 text-text-primary mx-3 mb-2 flex items-center gap-2 rounded-lg border p-3"
+          >
+            <Icon name="lock" className="text-primary-button-bg size-3 shrink-0" />
+            <span className="text-xs leading-none">{skillsDisabledReason}</span>
           </div>
-        </>
-      )}
+        ) : null}
+        <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-2">
+          {tab === 'connectors' ? (
+            <>
+              {pinnedSelectedConnectors.length > 0 ? (
+                <>
+                  <SectionHeading label="Selected" count={pinnedSelectedConnectors.length} />
+                  {pinnedSelectedConnectors.map(c => (
+                    <CatalogRow
+                      key={c.id}
+                      title={c.name}
+                      logo={connectorLogos[c.name]}
+                      fallbackIcon="mcp-server"
+                      checked={selectedMcpIds.has(c.id)}
+                      action={
+                        isUnauthenticatedDcrConnector(c) ? (
+                          <ConnectorConnectButton connector={c} onConnected={refreshConnectors} />
+                        ) : undefined
+                      }
+                      onToggle={() => toggleConnector(c)}
+                    />
+                  ))}
+                </>
+              ) : null}
+              {pinnedAvailableConnectors.length > 0 ? (
+                <>
+                  <SectionHeading label="Available" count={pinnedAvailableConnectors.length} />
+                  {pinnedAvailableConnectors.map(c => (
+                    <CatalogRow
+                      key={c.id}
+                      title={c.name}
+                      logo={connectorLogos[c.name]}
+                      fallbackIcon="mcp-server"
+                      checked={selectedMcpIds.has(c.id)}
+                      action={
+                        isUnauthenticatedDcrConnector(c) ? (
+                          <ConnectorConnectButton connector={c} onConnected={refreshConnectors} />
+                        ) : undefined
+                      }
+                      onToggle={() => toggleConnector(c)}
+                    />
+                  ))}
+                </>
+              ) : null}
+              {filteredConnectors.length === 0 && connectors.length > 0 ? (
+                <DraftCatalogEmptyState loading={loading} emptyLabel="No connectors" settingsTarget="Connectors" />
+              ) : null}
+              {connectors.length === 0 ? (
+                <DraftCatalogEmptyState
+                  loading={loading}
+                  emptyLabel="No connectors"
+                  settingsTarget="Connectors"
+                  onOpenSettings={shell && canConfigureConnectors ? () => openSettings('connectors') : undefined}
+                />
+              ) : null}
+            </>
+          ) : (
+            <>
+              {pinnedSelectedSkills.length > 0 ? (
+                <>
+                  <SectionHeading label="Selected" count={pinnedSelectedSkills.length} />
+                  {pinnedSelectedSkills.map(renderSkill)}
+                </>
+              ) : null}
+              {pinnedAvailableSkills.length > 0 ? (
+                <>
+                  <SectionHeading label="Available" count={pinnedAvailableSkills.length} />
+                  {pinnedAvailableSkills.map(renderSkill)}
+                </>
+              ) : null}
+              {filteredSkills.length === 0 ? (
+                <DraftCatalogEmptyState
+                  loading={loading}
+                  emptyLabel="No skills"
+                  settingsTarget={needsSandbox ? 'a Sandbox' : 'Skills'}
+                  onOpenSettings={
+                    skills.length === 0 && shell && (needsSandbox ? canConfigureSandbox : canConfigureSkills)
+                      ? () => openSettings(needsSandbox ? 'sandbox' : 'skills')
+                      : undefined
+                  }
+                />
+              ) : null}
+            </>
+          )}
+        </div>
+      </>
     </>
   );
+  const compactActions = [
+    ...(hasValidModel
+      ? [
+          {
+            id: 'tools',
+            label: `Tools (${toolsCount})`,
+            icon: 'wrench',
+            onSelect: () => openPicker(),
+          },
+        ]
+      : []),
+    ...(onAttach === undefined
+      ? []
+      : [
+          {
+            id: 'attach',
+            label: 'Attach a file',
+            icon: 'paperclip',
+            onSelect: onAttach,
+          },
+        ]),
+  ];
 
   return (
-    <div ref={containerRef} className="relative flex flex-wrap items-center gap-1.5">
-      {hasValidModel ? (
+    <div ref={containerRef} className="relative flex flex-wrap items-center">
+      {compactLayout ? (
+        <DraftComposerActionsMenu actions={compactActions} disabled={disabled || isRunning} />
+      ) : hasValidModel ? (
         <Tooltip content={toolsTooltip} className="max-w-xs whitespace-pre-line text-left" side="top">
           <button
             type="button"
@@ -592,11 +649,7 @@ export function DraftCompositeSelector({ disabled, isRunning, onAttach }: DraftC
             aria-haspopup="dialog"
             aria-expanded={open}
             aria-controls={open ? menuId : undefined}
-            className={auiButtonClass({
-              variant: 'ghost',
-              size: 'sm',
-              className: 'h-8 gap-1.5 rounded-md px-2 text-xs',
-            })}
+            className={auiButtonClass({ variant: 'ghost', size: 'large', className: 'gap-1.5 px-2 text-xs' })}
             onClick={() => {
               if (open) {
                 setOpenAndFlush(false);
@@ -605,16 +658,16 @@ export function DraftCompositeSelector({ disabled, isRunning, onAttach }: DraftC
               openPicker();
             }}
           >
-            <Icon name="wrench" className="size-3.5" />
+            <Icon name="wrench" />
             <span>Tools</span>
-            <span className="bg-primary-button-bg/10 text-primary-button-bg rounded px-1.5 py-0.5 text-[10px] font-semibold">
+            <span className="rounded bg-primary-button-bg/10 px-1.5 py-0.5 text-[0.625rem] font-semibold text-primary-button-bg">
               {toolsCount}
             </span>
           </button>
         </Tooltip>
       ) : null}
 
-      {onAttach ? (
+      {!compactLayout && onAttach ? (
         <Tooltip content="Attach a file">
           <button
             type="button"
@@ -638,7 +691,7 @@ export function DraftCompositeSelector({ disabled, isRunning, onAttach }: DraftC
             id={menuId}
             role="dialog"
             aria-label="Add to composer"
-            className="bg-card-bg text-text-primary absolute bottom-full left-0 z-50 mb-2 flex h-[22rem] w-[28rem] max-w-[min(28rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-lg border border-border shadow-lg"
+            className="aui-popup-enter bg-card-bg text-text-primary absolute bottom-full left-0 z-50 mb-2 flex h-[22rem] w-[28rem] max-w-[min(28rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-lg border border-border shadow-lg"
           >
             {content}
           </div>
@@ -650,6 +703,8 @@ export function DraftCompositeSelector({ disabled, isRunning, onAttach }: DraftC
 
 declare module '../../theme/SlotsProvider.js' {
   interface AtomSlots {
+    CatalogRow: typeof CatalogRow;
+    ConnectorConnectButton: typeof ConnectorConnectButton;
     DraftCompositeSelector: typeof DraftCompositeSelector;
   }
 }

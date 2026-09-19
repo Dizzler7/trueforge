@@ -1,6 +1,6 @@
 # Full-stack smoke test. Reads packages/trueforge/.env for secrets and
-# credentials; host ports and in-network DB/Redis targets are opinionated here
-# so they do not collide with or inherit host-dev values.
+# credentials; in-network DB/Redis targets are opinionated here so they do not
+# inherit host-dev localhost values. Postgres/Redis stay off the host network.
 name: trueforge
 
 services:
@@ -9,9 +9,6 @@ services:
     env_file:
       - path: packages/trueforge/.env
         required: true
-    # Host 5433 avoids conflict with docker-compose.dev.yml on 5432.
-    ports:
-      - '5433:5432'
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
     healthcheck:
@@ -25,9 +22,6 @@ services:
   # turn cancel via request-reply).
   redis:
     image: redis:7-alpine
-    # Host 6380 avoids conflict with docker-compose.dev.yml on 6379.
-    ports:
-      - '6380:6379'
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
       interval: 5s
@@ -85,5 +79,32 @@ services:
       start_period: 15s
     # Above the app's default GRACEFUL_TIMEOUT_SECONDS (30) so SIGKILL does not
     # cut off turn drain.
+    stop_grace_period: 35s
+    restart: unless-stopped
+
+  # Schedule controller: runs the periodic control loops (schedule dispatch) as a separate service.
+  controller:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    image: truefoundry-server:latest
+    command: ['node', 'dist/controller-main.js']
+    environment:
+      NODE_ENV: production
+      STANDALONE: 'false'
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      # The controller is its own container, so localhost would be itself; `server` is
+      # the compose DNS name that resolves to the server container.
+      SERVER_URL: http://server:8790
+    env_file:
+      - path: packages/trueforge/.env
+        required: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      server:
+        condition: service_healthy
+    # Above GRACEFUL_TIMEOUT_SECONDS (30) so SIGKILL does not cut off loop drain.
     stop_grace_period: 35s
     restart: unless-stopped

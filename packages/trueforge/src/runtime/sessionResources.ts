@@ -1,36 +1,119 @@
-/**
- * Store-backed model/MCP/skill/sandbox resolution for session admit and turns.
- */
-import type { AgentSpec } from '@truefoundry/trueforge-core/agent-session';
+import type { AgentSpec, SessionHandle } from '@truefoundry/trueforge-core/agent-session';
 import {
   Sandbox,
   SkillMounter,
   type AgentDefinition,
   type AgentTracing,
-  type GitSkill,
   type ModelParams,
   type RemoteMcpHeaders,
   type SandboxProvider,
+  type Skill,
   type VercelAIProviderConfig,
 } from '@truefoundry/trueforge-core/core';
 import { HTTPException } from 'hono/http-exception';
 import { join } from 'node:path';
 import type { Logger } from 'winston';
+import { z } from 'zod';
 import configuration from '../config';
-import type { IMcpServerStore, McpServerRecord } from '../db/mcpServerStore';
+import type { IMcpServerStore, IMcpServerWithAuthStore } from '../db/mcpServerStore';
 import type { IModelProviderStore } from '../db/modelProviderStore';
 import type { ISandboxProviderStore } from '../db/sandboxProviderStore';
 import type { ISkillStore } from '../db/skillStore';
-import { isMcpAuthRequired, resolveMcpAuth } from '../mcp/auth/mcpDcr';
-import type { IOAuthTokenStore } from '../mcp/auth/types';
 import { LocalSandboxProvider } from '../sandbox/local/provider/LocalSandboxProvider';
 import { getCachedLocalSandboxSupport, isLocalSandboxFallbackEnabled } from '../sandbox/localRuntime';
-import { toSandboxProvider } from '../sandbox/providerUtils';
-import { resolveConfiguredMcpRequestHeaders } from '../schemas/mcpServer';
+import { toSandboxProviderFromRecord } from '../sandbox/providerUtils';
+import type { ReasoningEffort } from '../schemas/modelProvider';
+import { resolveWebSearchProvider } from '../websearch/providers';
 
 export interface McpConnection {
   url: string;
   headers: RemoteMcpHeaders;
+}
+
+/** Gateway header carrying stringified JSON metadata. */
+export const X_TFY_METADATA = 'x-tfy-metadata';
+
+/** Prefix for harness-owned keys */
+export const TFG_METADATA_PREFIX = 'tfg';
+
+const GatewayMetadataSchema = z.record(z.string().min(1), z.string());
+
+/**
+ * Parse inbound `x-tfy-metadata`. Rejects malformed values rather than dropping them.
+ */
+export function parseGatewayMetadataHeader(raw: string): Record<string, string> {
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(raw);
+  } catch (error) {
+    throw new HTTPException(400, { message: `${X_TFY_METADATA} must be a JSON object`, cause: error });
+  }
+  const parsed = GatewayMetadataSchema.safeParse(decoded);
+  if (!parsed.success) {
+    throw new HTTPException(400, {
+      message: `${X_TFY_METADATA} must be a JSON object of string values`,
+    });
+  }
+  return parsed.data;
+}
+
+export function buildGatewayMetadata(input: { session: SessionHandle; turnId: string }): Record<string, string> {
+  // Session.metadata is intentionally omitted for now (Unicode-in-header risk); re-add later.
+  const metadata: Record<string, string> = {
+    [`${TFG_METADATA_PREFIX}.session_id`]: input.session.session_id,
+    [`${TFG_METADATA_PREFIX}.turn_id`]: input.turnId,
+  };
+  const { agent } = input.session;
+  if (agent.type === 'reference') {
+    metadata[`${TFG_METADATA_PREFIX}.agent_id`] = agent.id;
+    if (agent.name !== null) {
+      metadata[`${TFG_METADATA_PREFIX}.agent_name`] = agent.name;
+    }
+  }
+  return metadata;
+}
+
+/** Inbound x-tfy-metadata first; harness tfg.* always win */
+export function mergeGatewayMetadata(input: {
+  session: SessionHandle;
+  turnId: string;
+  tfyMetadata?: Record<string, string> | undefined;
+}): Record<string, string> {
+  return {
+    ...input.tfyMetadata,
+    ...buildGatewayMetadata({ session: input.session, turnId: input.turnId }),
+  };
+}
+
+export function gatewayMetadataHeaders(metadata: Record<string, string>): Record<string, string> {
+  if (Object.keys(metadata).length === 0) {
+    return {};
+  }
+  return { [X_TFY_METADATA]: JSON.stringify(metadata) };
+}
+
+/**
+ * Merge gateway metadata into MCP invoke headers. Preserves authRequired;
+ * metadata is applied after auth/per-server headers.
+ */
+export function withGatewayMetadataHeaders(input: {
+  headers: RemoteMcpHeaders;
+  metadataHeaders: Record<string, string>;
+}): RemoteMcpHeaders {
+  const { headers, metadataHeaders } = input;
+  if (Object.keys(metadataHeaders).length === 0) {
+    return headers;
+  }
+  if (typeof headers !== 'function') {
+    return { ...headers, ...metadataHeaders };
+  }
+  return async () => {
+    const result = await headers();
+    if ('authRequired' in result) {
+      return result;
+    }
+    return { headers: { ...result.headers, ...metadataHeaders } };
+  };
 }
 
 /** Split `provider/model` FQN. Returns undefined when the shape is not exactly one slash. */
@@ -49,6 +132,7 @@ export function parseModelFqn(name: string): { providerName: string; modelName: 
  * Load turn-ready model config and defaults for a configured FQN (`provider/model`).
  * Malformed FQN or missing provider/model → HTTPException(422).
  */
+
 export async function getModelDetails({
   tenant_id,
   name,
@@ -61,6 +145,7 @@ export async function getModelDetails({
   providerConfig: VercelAIProviderConfig;
   defaultModelParams: ModelParams;
   modelProperties: AgentDefinition['modelProperties'];
+  reasoningEfforts: ReasoningEffort[] | undefined;
 }> {
   const parsed = parseModelFqn(name);
   if (parsed === undefined) {
@@ -68,7 +153,11 @@ export async function getModelDetails({
       message: `Model name must be a fully qualified "provider/model": ${name}`,
     });
   }
-  const provider = await store.getProvider({ tenant_id, name: parsed.providerName });
+  const provider = await store.getProvider({
+    tenant_id,
+    name: parsed.providerName,
+    model_name: parsed.modelName,
+  });
   if (provider === undefined) {
     throw new HTTPException(422, {
       message: `Unknown model "${name}" — provider not configured`,
@@ -82,138 +171,52 @@ export async function getModelDetails({
   }
   // Provider types are adapter names, so this assignment is what keeps them so: a type with no
   // `buildLanguageModel` case fails to compile here.
-  const { type, base_url } = provider.manifest;
+  const { type, base_url: baseUrl } = provider.manifest;
   return {
     providerConfig: {
       provider: { type, name: provider.name },
       model: { id: model.model_id, name: model.name },
       name,
-      baseUrl: base_url,
-      // Custom providers may omit auth; adapters still require a string.
+      baseUrl,
       apiKey: provider.manifest.auth?.api_key ?? '',
       headers: {},
     },
     defaultModelParams: model.properties.max_output_tokens ? { max_tokens: model.properties.max_output_tokens } : {},
     modelProperties: { contextLength: model.properties.context_length },
-  };
-}
-
-function dcrHeadersResolver(params: {
-  record: McpServerRecord;
-  tokenStore: IOAuthTokenStore;
-  mcpServerStore: IMcpServerStore;
-  clientName: string;
-  userRef: string;
-}): RemoteMcpHeaders {
-  const { record, tokenStore, mcpServerStore, clientName, userRef } = params;
-  return async () => {
-    const result = await resolveMcpAuth({
-      tokenStore,
-      mcpServerStore,
-      serverId: record.id,
-      userRef,
-      mcpServerUrl: record.manifest.url,
-      mcpServerName: record.name,
-      clientName,
-    });
-    if (isMcpAuthRequired(result)) {
-      // Wire `id` must match RemoteMCP.id (AgentSpec name), not the DB row ULID —
-      // init events, tool-call metadata, and snapshots all key by name.
-      return {
-        authRequired: {
-          servers: [{ id: record.name, name: record.name, auth_url: result.authUrl.href }],
-        },
-      };
-    }
-    return { headers: result.headers };
+    reasoningEfforts: model.properties.reasoning_efforts,
   };
 }
 
 /**
- * Load MCP url + headers for a configured server.
- * DCR uses resolveMcpAuth; header / no-auth use resolveConfiguredMcpRequestHeaders.
- * Returns undefined when the server is not registered — callers choose the response.
+ * Load MCP url + headers for a configured server. Returns undefined when unregistered.
+ *
+ * TODO: OAuth header resolvers re-run on every RemoteMCP listTools/callTool; cache or gate later.
  */
 export async function getMcpConnection({
   tenant_id,
   name,
   store,
-  tokenStore,
-  clientName,
   userRef,
 }: {
   tenant_id: string;
   name: string;
-  store: IMcpServerStore;
-  tokenStore: IOAuthTokenStore;
-  clientName: string;
+  store: IMcpServerWithAuthStore;
   userRef: string;
 }): Promise<McpConnection | undefined> {
   const record = await store.getServer({ tenant_id, name });
   if (record === undefined) {
     return undefined;
   }
-  if (record.manifest.auth?.type === 'dcr') {
-    return {
-      url: record.manifest.url,
-      headers: dcrHeadersResolver({
-        record,
-        tokenStore,
-        mcpServerStore: store,
-        clientName,
-        userRef,
-      }),
-    };
-  }
   return {
     url: record.manifest.url,
-    headers: resolveConfiguredMcpRequestHeaders(record.manifest),
+    headers: store.resolveInvokeHeaders({ record, userRef }),
   };
-}
-
-/**
- * Expand agent_spec skill names into git mounts from the skill store.
- * Wire url/path/ref/description on the request are ignored — the store row wins.
- * Throws HTTPException(422) if any name is not registered.
- */
-export async function resolveGitSkills({
-  tenant_id,
-  skills,
-  store,
-}: {
-  tenant_id: string;
-  skills: readonly { name: string }[];
-  store: ISkillStore;
-}): Promise<GitSkill[]> {
-  if (skills.length === 0) {
-    return [];
-  }
-  const names = skills.map(skill => skill.name);
-  const records = await store.listSkills({ tenant_id, names });
-  const byName = new Map(records.map(record => [record.name, record]));
-  const resolved: GitSkill[] = [];
-  for (const skill of skills) {
-    const record = byName.get(skill.name);
-    if (record === undefined) {
-      throw new HTTPException(422, {
-        message: `Unknown skill "${skill.name}" — not configured`,
-      });
-    }
-    resolved.push({
-      name: record.manifest.name,
-      description: record.manifest.description,
-      url: record.manifest.url,
-      path: record.manifest.path ?? '',
-      ref: record.manifest.ref,
-    });
-  }
-  return resolved;
 }
 
 /**
  * Build a runtime SandboxProvider from the configured store row, or the
  * in-memory local fallback when standalone + the cached probe is supported.
- * Builds a fresh Daytona client per call (no network I/O).
+ * Builds a fresh provider client per call (no network I/O).
  */
 /** Single path segment under the sandboxes parent (`_` when sessionId is missing or unsafe). */
 export function localSandboxSessionSegment(sessionId: string | undefined): string {
@@ -236,14 +239,7 @@ export async function resolveSandboxProvider({
 }): Promise<SandboxProvider | undefined> {
   const record = await store.getSandboxProvider(tenant_id);
   if (record !== undefined) {
-    // Clone from the snapshot that was actually built (persisted build_ref), not a name
-    // derived from the current image — otherwise an image bump breaks creation until rebuild.
-    return toSandboxProvider({
-      manifest: record.manifest,
-      tenant_id,
-      logger,
-      build_metadata: record.build_metadata,
-    });
+    return toSandboxProviderFromRecord({ record, tenant_id, logger });
   }
   if (!configuration.STANDALONE) {
     return undefined;
@@ -262,17 +258,17 @@ export async function resolveSandboxProvider({
 }
 
 /**
- * Builds a Sandbox for one turn from a resolved provider and git mounts.
+ * Builds a Sandbox for one turn from a resolved provider and skill mounts.
  */
 export function buildTurnSandbox(input: {
   provider: SandboxProvider;
   logger: Logger;
-  gitSkills: readonly GitSkill[];
+  skills?: readonly Skill[];
   fileDownloadEnabled: boolean;
   existingSandboxId?: string | undefined;
   tracing: AgentTracing;
 }): Sandbox {
-  const skillMounter = input.gitSkills.length > 0 ? new SkillMounter([...input.gitSkills]) : undefined;
+  // Empty mounter still uploads requested-skills file so existing skills are cleaned up.
   return new Sandbox({
     provider: input.provider,
     existingSandboxId: input.existingSandboxId,
@@ -280,7 +276,7 @@ export function buildTurnSandbox(input: {
     blockDestructiveToolsInCodeMode: true,
     mcpRequestTimeoutMs: configuration.MCP_REQUEST_TIMEOUT_MS,
     mcpConnectTimeoutMs: configuration.MCP_CONNECT_TIMEOUT_MS,
-    ...(skillMounter ? { skillMounter } : {}),
+    skillMounter: new SkillMounter({ skills: input.skills ?? [] }),
     tracing: input.tracing,
     logger: input.logger,
   });
@@ -289,7 +285,7 @@ export function buildTurnSandbox(input: {
 /**
  * Cross-checks an AgentSpec against configured models / MCP / skills and
  * sandbox capability. Throws HTTPException(422) for semantic failures.
- * Skills are admitted by name only; mounts expand at turn time.
+ * Skills must exist in the skill store (git name) or pass SFY resolve (registry FQN).
  */
 export async function validateAgentSpec({
   spec,
@@ -306,27 +302,14 @@ export async function validateAgentSpec({
   skillStore: ISkillStore;
   sandboxProviderStore: ISandboxProviderStore;
 }): Promise<void> {
-  const parsed = parseModelFqn(spec.model.name);
-  if (parsed === undefined) {
-    throw new HTTPException(422, {
-      message: `Model name must be a fully qualified "provider/model": ${spec.model.name}`,
-    });
-  }
-  const provider = await modelProviderStore.getProvider({ tenant_id, name: parsed.providerName });
-  if (provider === undefined) {
-    throw new HTTPException(422, {
-      message: `Unknown model "${spec.model.name}" — provider not configured`,
-    });
-  }
-  const model = provider.manifest.models.find(entry => entry.name === parsed.modelName);
-  if (model === undefined) {
-    throw new HTTPException(422, {
-      message: `Unknown model "${spec.model.name}" — not configured on provider`,
-    });
-  }
+  const resolved = await getModelDetails({
+    tenant_id,
+    name: spec.model.name,
+    store: modelProviderStore,
+  });
   const reasoningEffort = spec.model.params?.reasoning_effort;
   if (reasoningEffort !== undefined) {
-    const efforts = model.properties.reasoning_efforts;
+    const efforts = resolved.reasoningEfforts;
     if (!efforts?.some(effort => effort === reasoningEffort)) {
       throw new HTTPException(422, {
         message: efforts
@@ -340,7 +323,12 @@ export async function validateAgentSpec({
   if (requestedMcpServers.length > 0) {
     const names = requestedMcpServers.map(server => server.name);
     const configuredNames = new Set(
-      (await mcpServerStore.listServers({ tenant_id, names })).map(record => record.name),
+      (
+        await mcpServerStore.listServers({
+          tenant_id,
+          names,
+        })
+      ).map(record => record.name),
     );
     const unknown = requestedMcpServers.find(server => !configuredNames.has(server.name));
     if (unknown !== undefined) {
@@ -352,14 +340,7 @@ export async function validateAgentSpec({
 
   const requestedSkills = spec.skills ?? [];
   if (requestedSkills.length > 0) {
-    const names = requestedSkills.map(skill => skill.name);
-    const configuredNames = new Set((await skillStore.listSkills({ tenant_id, names })).map(record => record.name));
-    const unknown = requestedSkills.find(skill => !configuredNames.has(skill.name));
-    if (unknown !== undefined) {
-      throw new HTTPException(422, {
-        message: `Unknown skill "${unknown.name}" — not configured`,
-      });
-    }
+    await skillStore.validateAgentSkills({ tenant_id, skills: requestedSkills });
   }
 
   const wantsSandbox = spec.config.sandbox.enabled;
@@ -373,5 +354,11 @@ export async function validateAgentSpec({
           : 'sandbox is enabled but no sandbox provider is configured — PUT /settings/sandbox-providers',
       });
     }
+  }
+
+  if (spec.config.web_search.enabled && resolveWebSearchProvider() === undefined) {
+    throw new HTTPException(422, {
+      message: 'web_search is enabled but no web-search provider is configured',
+    });
   }
 }

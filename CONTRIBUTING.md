@@ -55,6 +55,8 @@ Open a feature request in the issue tracker, or upvote an existing request that 
 
 ## Prerequisites
 
+Source development (`pnpm install`, `pnpm dev`, `pnpm standalone:dev`, `pnpm build`) is supported on **macOS, Linux, and Windows via WSL2**. Native Windows (PowerShell / cmd) is not supported at this time.
+
 - **Node.js 22.14+** (see [`.nvmrc`](.nvmrc); pnpm 11.16 needs 22.13+, and `better-sqlite3` v13 needs Node-API 10)
 - **pnpm** (version pinned via `packageManager` in [`package.json`](package.json); `corepack enable` handles it)
 - **Docker** - only needed for Postgres/Redis dev infra, the smoke test, and local SDK generation (maintainers). Fork contributors do not generate the SDK.
@@ -69,6 +71,7 @@ This is a pnpm workspace:
 | `@truefoundry/trueforge-core` | `@truefoundry/trueforge-core` | [`packages/trueforge-core`](packages/trueforge-core) | Library: agent core, sessions, and streaming |
 | `@truefoundry/trueforge-ui`   | `@truefoundry/trueforge-ui`   | [`packages/trueforge-ui`](packages/trueforge-ui)     | Embeddable agent chat UI SDK                 |
 | `@truefoundry/trueforge-sdk`  | `@truefoundry/trueforge-sdk`  | [`packages/trueforge-sdk`](packages/trueforge-sdk)   | Generated TypeScript API client              |
+| `trueforge_sdk`               | `trueforge-sdk` (PyPI)        | [`python/trueforge_sdk`](python/trueforge_sdk)       | Generated Python API client                  |
 | `frontend`                    | -                             | [`packages/frontend`](packages/frontend)             | Chat UI app (bundled into the server)        |
 
 ## Setup
@@ -153,7 +156,7 @@ See [`packages/trueforge/.env.example`](packages/trueforge/.env.example) for eve
 - `PORT` - API port (default `8790`)
 - `FRONTEND_PORT` - Vite UI port in dev (default `3000`); see [`packages/frontend/README.md`](packages/frontend/README.md)
 - `VITE_SERVER_URL` - point the Vite proxy at a different API
-- `PUBLIC_BASE_URL` - public origin for MCP OAuth / OIDC callbacks. Required for `pnpm standalone:dev` / `pnpm dev` and for distributed mode (e.g. `http://localhost:3000` for Vite). Non-development standalone falls back to `http://localhost:$PORT`.
+- `PUBLIC_BASE_URL` - public application URL for MCP OAuth / OIDC callbacks. Required for `pnpm standalone:dev` / `pnpm dev` and for distributed mode (e.g. `http://localhost:3000` for Vite). Non-development standalone falls back to `http://localhost:$PORT`.
 - `FRONTEND_DIR` - directory of a built UI for the server to serve
 - `SQLITE_PATH` - SQLite file location in standalone mode
 - `REDIS_URL` / `POSTGRES_*` - used when `STANDALONE=false`
@@ -181,6 +184,7 @@ Workspace tasks go through `package.json` scripts - if a repeatable workflow is 
 | `pnpm test` / `pnpm typecheck`                       | Workspace checks                                      |
 | `pnpm lint` / `pnpm format`                          | ESLint (with fixes) / Prettier                        |
 | `pnpm smoke` / `pnpm smoke:down`                     | Full Docker Compose stack + health check              |
+| `pnpm smoke:npx`                                     | Pack the published CLI and boot it like `npx`         |
 | `pnpm chart:lint` / `pnpm chart:template`            | Validate the Helm chart                               |
 | `pnpm clean` / `pnpm clean:all`                      | Remove build outputs (+ `node_modules` for `:all`)    |
 
@@ -211,11 +215,11 @@ pnpm smoke       # build, wait for healthy services, check /healthz and UI
 pnpm smoke:down
 ```
 
-Open [http://localhost:8791](http://localhost:8791). Credentials come from `packages/trueforge/.env`. Host ports are offset from local dev so they do not collide: Postgres `:5433`, Redis `:6380`, app `:8791`.
+Open [http://localhost:8791](http://localhost:8791). Credentials come from `packages/trueforge/.env`. The app is on host `:8791` (offset from local `pnpm dev` on `:8790`); Postgres and Redis stay on the compose network only.
 
 ## Generated code - do not edit by hand
 
-- [`packages/trueforge-sdk`](packages/trueforge-sdk), [`.github/fern/openapi/openapi.json`](.github/fern/openapi/openapi.json), and [`docs/openapi.json`](docs/openapi.json) are generated and committed. Edit route handlers under `packages/trueforge/src/routes/` instead; CI regenerates the outputs. To regenerate locally (Docker required): `pnpm sdk:generate`.
+- [`packages/trueforge-sdk`](packages/trueforge-sdk), [`python/trueforge_sdk`](python/trueforge_sdk), [`.github/fern/openapi/openapi.json`](.github/fern/openapi/openapi.json), and [`docs/openapi.json`](docs/openapi.json) are generated and committed. Edit route handlers under `packages/trueforge/src/routes/` instead; CI regenerates the outputs. To regenerate locally (Docker required): `pnpm sdk:generate`.
 - Catalog YAML files under `packages/trueforge/catalog/` are inlined at build time by `build:gen` scripts.
 
 ## Server entry points

@@ -5,23 +5,25 @@
  * `nextPageToken`), and `null` normalized to absent. Harness keys MCP mounts by
  * name and returns `null` for optional fields — the maps below bridge both.
  *
- * Skills are name refs on the wire (`Skill`).
+ * Skills are name (+ optional preload) refs on the wire (`Skill`).
  *
  * Session create takes `{ name }` or `{ spec }`; reads carry the
  * `reference`/`inline` discriminator, with reference rows already naming their
  * agent. The UI filters with registry `agentId`.
  */
 import type { TrueForge, TrueForgeApi } from '@truefoundry/trueforge-sdk';
+import { readSessionIsCreateAgent } from '../../atoms/lib/sessionCreateAgent.js';
 import type {
   AgentChatServer,
+  CreateSessionRequest,
   ListResult,
   Session,
-  SessionEventItem,
   Turn,
   TurnInputItem,
   UserMessageContent,
 } from '../../server/types.js';
 import { createTrueForgeClient, type CreateTrueForgeClientOptions } from './client.js';
+import { toUiEventItem, toUiStreamingEvent, toUiTurnState } from './toUiTurnState.js';
 import type { HarnessAgentSpec, HarnessMcpServerMount, HarnessSkillMount } from './types.js';
 
 export type { HarnessAgentSpec, HarnessMcpServerMount, HarnessSkillMount } from './types.js';
@@ -30,12 +32,24 @@ export type CreateHarnessChatServerOptions = CreateTrueForgeClientOptions & {
   client?: TrueForge;
 };
 
+/** UI session with create-agent intent for resume chrome. */
+export type HarnessUiSession = Session<HarnessAgentSpec> & { isCreateAgent: boolean };
+
+export type HarnessCreateSessionRequest = CreateSessionRequest<HarnessAgentSpec> & {
+  metadata?: Record<string, string>;
+};
+
 function toUiMcpServer(server: TrueForgeApi.McpServer): HarnessMcpServerMount {
   return server;
 }
 
 function toUiSkill(skill: TrueForgeApi.Skill): HarnessSkillMount {
-  return { name: skill.name };
+  return { name: skill.name, preload: skill.preload === true };
+}
+
+function toHarnessSkill(skill: HarnessSkillMount): TrueForgeApi.Skill {
+  // Picker `id` is AvailableSkill.name (attach key); `name` is display — see builder getSkills.
+  return { name: skill.id ?? skill.name, preload: skill.preload === true };
 }
 
 /** Drop UI draft `id` before admission; Harness MCP mounts are name-keyed. */
@@ -56,7 +70,7 @@ export function toHarnessAgentSpec(spec: HarnessAgentSpec): TrueForgeApi.AgentSp
             return server;
           }),
         }),
-    ...(skills === undefined ? {} : { skills: skills.map(({ name }) => ({ name })) }),
+    ...(skills === undefined ? {} : { skills: skills.map(toHarnessSkill) }),
   };
 }
 
@@ -69,10 +83,11 @@ export function toUiAgentSpec(spec: TrueForgeApi.AgentSpec): HarnessAgentSpec {
   };
 }
 
-function toUiSession(session: TrueForgeApi.Session): Session<HarnessAgentSpec> {
+function toUiSession(session: TrueForgeApi.Session): HarnessUiSession {
   return {
     id: session.id,
     isMutable: session.agent.type === 'inline',
+    isCreateAgent: readSessionIsCreateAgent(session.metadata),
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
     ...(session.title === null ? {} : { title: session.title }),
@@ -81,6 +96,11 @@ function toUiSession(session: TrueForgeApi.Session): Session<HarnessAgentSpec> {
     ...(session.agent.type === 'reference' && session.agent.name !== null ? { agentName: session.agent.name } : {}),
     ...(session.agent.type === 'inline' ? { agentSpec: toUiAgentSpec(session.agent.spec) } : {}),
   };
+}
+
+function createSessionMetadata(request: HarnessCreateSessionRequest): Record<string, string> | undefined {
+  if (request.metadata === undefined) return undefined;
+  return request.metadata;
 }
 
 /** Spread drops the interface identity, which is what makes the SDK's index-signature part type accept it. */
@@ -93,28 +113,29 @@ function toUiInput(input: TrueForgeApi.TurnInputItem[]): TurnInputItem[] {
 }
 
 function toUiTurn(turn: TrueForgeApi.Turn): Turn {
-  const { previousTurnId, input, ...rest } = turn;
+  const { previousTurnId, input, state, ...rest } = turn;
   return {
     ...rest,
+    state: toUiTurnState(state),
     ...(previousTurnId === null ? {} : { previousTurnId }),
     ...(input === undefined ? {} : { input: toUiInput(input) }),
   };
 }
 
-function toUiEventItem(item: TrueForgeApi.SessionEventItem): SessionEventItem {
-  return { turnId: item.turnId, event: { ...item.event } };
-}
-
-interface HarnessPageSource<T> {
+export interface HarnessPageSource<T> {
   data: T[];
   response: { pagination: TrueForgeApi.TokenPagination };
 }
 
-function toListResult<TSource, TResult>(
+export function toListResult<TSource, TResult>(
   page: HarnessPageSource<TSource>,
-  map: (item: TSource) => TResult,
+  map: (item: TSource) => TResult | undefined,
 ): ListResult<TResult> {
-  const data = page.data.map(map);
+  const data: TResult[] = [];
+  for (const item of page.data) {
+    const mapped = map(item);
+    if (mapped !== undefined) data.push(mapped);
+  }
   const token = page.response.pagination.nextPageToken;
   return {
     data,
@@ -148,7 +169,7 @@ function toHarnessInput(input: TurnInputItem[]): TrueForgeApi.TurnInputItem[] {
 
 export function createHarnessChatServer(
   options: CreateHarnessChatServerOptions = {},
-): AgentChatServer<HarnessAgentSpec> {
+): AgentChatServer<HarnessAgentSpec, HarnessUiSession, HarnessCreateSessionRequest> {
   const client = options.client ?? createTrueForgeClient(options);
   return {
     // The sandbox is resolved server-side from the turn, so `sandboxId` is accepted for parity
@@ -159,15 +180,18 @@ export function createHarnessChatServer(
     },
 
     async createSession(request) {
+      const metadata = createSessionMetadata(request);
       if (request.agentName !== undefined && request.agentName.length > 0) {
         const created = await client.sessions.create({
           agent: { name: request.agentName },
+          ...(metadata === undefined ? {} : { metadata }),
         });
         return toUiSession(created.data);
       }
       if (request.agentSpec !== undefined) {
         const created = await client.sessions.create({
           agent: { spec: toHarnessAgentSpec(request.agentSpec) },
+          ...(metadata === undefined ? {} : { metadata }),
         });
         return toUiSession(created.data);
       }
@@ -180,6 +204,7 @@ export function createHarnessChatServer(
         ...(request.order === undefined ? {} : { order: request.order }),
         ...(request.pageToken === undefined ? {} : { pageToken: request.pageToken }),
         ...(request.agentId === undefined || request.agentId.length === 0 ? {} : { agentId: request.agentId }),
+        ...(request.createdByMe === undefined ? {} : { createdByMe: request.createdByMe }),
       });
       return toListResult(page, toUiSession);
     },
@@ -216,10 +241,13 @@ export function createHarnessChatServer(
       });
       let fallbackSequence = 0;
       for await (const item of stream.withMetadata()) {
-        yield {
-          sequenceNumber: sequenceNumber(item.id, fallbackSequence),
-          event: { ...item.data },
-        };
+        const event = toUiStreamingEvent(item.data);
+        if (event !== undefined) {
+          yield {
+            sequenceNumber: sequenceNumber(item.id, fallbackSequence),
+            event,
+          };
+        }
         fallbackSequence += 1;
       }
     },
@@ -239,10 +267,13 @@ export function createHarnessChatServer(
       });
       let fallbackSequence = 0;
       for await (const item of stream.withMetadata()) {
-        yield {
-          sequenceNumber: sequenceNumber(item.id, fallbackSequence),
-          event: { ...item.data },
-        };
+        const event = toUiStreamingEvent(item.data);
+        if (event !== undefined) {
+          yield {
+            sequenceNumber: sequenceNumber(item.id, fallbackSequence),
+            event,
+          };
+        }
         fallbackSequence += 1;
       }
     },

@@ -4,7 +4,8 @@
  */
 import type { TrueForge, TrueForgeApi } from '@truefoundry/trueforge-sdk';
 import type { AgentBuilderServer, AgentLibraryEntry, ModelSelection, SearchAgentsParams } from '../../server/types.js';
-import { toUiConnectorFromReadEntry } from './catalogs/connectorCatalog.js';
+import { AGENTS_PAGE_DEFAULT, clampAgentsPageSize, drainAgentsList, listAgentsPage } from './agentsList.js';
+import { toUiConnectorFromReadEntry, toUiTool } from './catalogs/connectorCatalog.js';
 import { toHarnessAgentSpec, toUiAgentSpec } from './chatServer.js';
 import { createTrueForgeClient, type CreateTrueForgeClientOptions } from './client.js';
 import { listConfiguredMcpServers, listSkills } from './lists.js';
@@ -36,7 +37,7 @@ export function toModelSelection({
   model: TrueForgeApi.AvailableModel;
   logo?: string;
 }): ModelSelection {
-  const efforts = model.properties.reasoningEfforts;
+  const { contextLength, maxOutputTokens, reasoningEfforts } = model.properties;
   return {
     id: model.modelId,
     name: model.name,
@@ -45,7 +46,9 @@ export function toModelSelection({
       ...(logo === undefined ? {} : { logo }),
     },
     properties: {
-      ...(efforts !== undefined && efforts.length > 0 ? { reasoningEfforts: [...efforts] } : {}),
+      ...(contextLength === undefined ? {} : { contextLength }),
+      ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }),
+      ...(reasoningEfforts === undefined ? {} : { reasoningEfforts: [...reasoningEfforts] }),
     },
   };
 }
@@ -54,7 +57,9 @@ function toLibraryEntry(agent: TrueForgeApi.Agent): AgentLibraryEntry {
   return {
     name: agent.name,
     agentId: agent.id,
+    description: agent.description,
     agentSpec: toUiAgentSpec(agent.manifest),
+    createdBySubject: agent.createdBySubject,
   };
 }
 
@@ -81,35 +86,85 @@ export function createHarnessBuilderServer(
       });
     },
     // Skills require a configured sandbox provider; keep the picker empty when skill capability is off.
+    // Catalog AvailableSkill.name is store identity (FQN in TFY). Picker `id` copies that
+    // attach key; `name` is displayName so the draft can show a label without losing the wire key.
+    // Draft mounts `{ id, name }`; toHarnessSkill admits AgentSpec.skills[].name = id ?? name.
     getSkills: async () => {
       const skills = await listSkills(client);
-      return skills.map(skill => ({ id: skill.name, name: skill.name, description: skill.description }));
+      return skills.map(skill => {
+        const { display_name, repository_name, version: versionRaw } = skill.metadata ?? {};
+        const version = Number(versionRaw);
+        const hasVersion = Number.isInteger(version) && version > 0;
+        return {
+          id: skill.name,
+          name: display_name ?? skill.name,
+          description: skill.description,
+          ...(repository_name === undefined ? {} : { skillRepoName: repository_name }),
+          ...(hasVersion
+            ? {
+                version,
+                loadVersions: async () => (await client.skills.listVersions({ name: skill.name })).data,
+              }
+            : {}),
+        };
+      });
     },
     getMcp: async () => (await listConfiguredMcpServers(client)).map(toUiConnectorFromReadEntry),
-
-    async searchAgents(req?: SearchAgentsParams) {
-      const { data } = await client.agents.list();
-      const query = req?.query?.trim().toLowerCase();
-      const filtered =
-        query === undefined || query === '' ? data : data.filter(agent => agent.name.toLowerCase().includes(query));
-      const offset = req?.offset ?? 0;
-      const limit = req?.limit ?? 50;
-      return filtered.slice(offset, offset + limit).map(toLibraryEntry);
+    getMcpConnector: async ({ connectorId }: { connectorId: string }) => {
+      const body = await client.mcpServers.get(connectorId);
+      return toUiConnectorFromReadEntry(body.data);
+    },
+    getMcpTools: async ({ connectorId }: { connectorId: string }) => {
+      const body = await client.mcpServers.listTools(connectorId);
+      return body.data.flatMap(tool =>
+        typeof tool.name === 'string' && tool.name.trim() !== '' ? [toUiTool(tool)] : [],
+      );
     },
 
-    async saveAgent({ agentName, agentSpec, intent }) {
+    async searchAgents(req?: SearchAgentsParams) {
+      const limit = clampAgentsPageSize(req?.limit ?? AGENTS_PAGE_DEFAULT);
+      const offset = req?.offset ?? 0;
+      const query = req?.query?.trim();
+      const rows = await listAgentsPage({
+        client,
+        limit,
+        offset,
+        ...(query === undefined || query === '' ? {} : { agentName: query }),
+      });
+      return rows.map(toLibraryEntry);
+    },
+
+    async saveAgent({ agentName, description: descriptionRaw, agentSpec, intent }) {
       const manifest = toHarnessAgentSpec(agentSpec);
+      const description = descriptionRaw?.trim();
       if (intent === 'update') {
-        const { data } = await client.agents.list();
-        const existing = data.find(agent => agent.name === agentName);
+        const agents = await drainAgentsList(client);
+        const existing = agents.find(agent => agent.name === agentName);
         if (!existing) {
           return {};
         }
-        await client.agents.update(existing.id, { manifest });
+        // Omit empty description on update so a reloaded draft (no description in session
+        // manifest) preserves the stored value instead of failing min(1).
+        await client.agents.update(existing.id, {
+          ...(description ? { description } : {}),
+          manifest,
+        });
         return { agentId: existing.id };
       }
-      const created = await client.agents.create({ name: agentName, manifest });
+      // Create requires description; fall back to name for clone of pre-description agents.
+      const created = await client.agents.create({
+        name: agentName,
+        description: description || agentName,
+        manifest,
+      });
       return { agentId: created.data.id };
+    },
+
+    async deleteAgent({ agentName }) {
+      const agents = await drainAgentsList(client);
+      const existing = agents.find(agent => agent.name === agentName);
+      if (!existing) return;
+      await client.agents.delete(existing.id);
     },
   };
 }

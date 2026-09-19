@@ -1,0 +1,211 @@
+'use client';
+
+import { useState, type ComponentType } from 'react';
+import { Icon } from '../../icons/Icon.js';
+import { useServerCapabilities } from '../../server/ServerContext.js';
+import { useSlot } from '../../theme/SlotsProvider.js';
+import { cn } from '../lib/cn.js';
+import { AgentOverviewMcpServers } from './AgentOverviewMcpServers.js';
+import type { AgentOverviewProps } from './types.js';
+
+type InstructionsView = 'markdown' | 'raw';
+
+const valueClassName = 'text-right font-mono text-primary-button-bg';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value != null;
+}
+
+function readName(value: object): string | null {
+  if (!('name' in value) || typeof value.name !== 'string') return null;
+  return value.name;
+}
+
+function readRecordValue(record: Record<string, unknown> | null, ...keys: string[]): unknown {
+  for (const key of keys) {
+    const value = record?.[key];
+    if (value !== undefined) return value;
+  }
+  return undefined;
+}
+
+function displayModelName(name: string): string {
+  const slash = name.lastIndexOf('/');
+  return slash >= 0 ? name.slice(slash + 1) : name;
+}
+
+export default function AgentOverview({ detail }: AgentOverviewProps) {
+  const Markdown = useSlot('Markdown');
+  const AgentOverviewCard = useSlot('AgentOverviewCard');
+  const capabilitiesAvailable = useServerCapabilities();
+  const [instructionsView, setInstructionsView] = useState<InstructionsView>('markdown');
+  const [copied, setCopied] = useState(false);
+  const spec = detail.agentSpec;
+  const skills = spec.skills ?? [];
+  const modelParams = isRecord(spec.model.params) ? spec.model.params : null;
+  const maxTokens = readRecordValue(modelParams, 'maxTokens', 'max_tokens');
+  const temperature = readRecordValue(modelParams, 'temperature');
+  const config = isRecord(spec.config) ? spec.config : null;
+  const sandbox = isRecord(config?.sandbox) ? config.sandbox : null;
+  const instructions = spec.instructions?.trim() ? spec.instructions : null;
+  const description = detail.description?.trim() ? detail.description : null;
+  const execution = [
+    ['Sandbox', typeof sandbox?.enabled === 'boolean' ? (sandbox.enabled ? 'Enabled' : 'Disabled') : undefined],
+    ['Iteration limit', readRecordValue(config, 'iterationLimit', 'iteration_limit')],
+    ['Response format', readRecordValue(config, 'responseFormat', 'response_format')],
+  ].filter((entry): entry is [string, string | number] => {
+    return typeof entry[1] === 'string' || typeof entry[1] === 'number';
+  });
+  const capabilities = [
+    ['Generative UI', spec.config?.generativeUi?.enabled],
+    ['Dynamic sub-agents', spec.config?.dynamicSubAgents?.enabled],
+    ['Ask user questions', spec.config?.askUserQuestions?.enabled],
+    ...(capabilitiesAvailable?.webSearch?.enabled === true
+      ? ([['Web search', spec.config?.webSearch?.enabled]] as const)
+      : []),
+  ].filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean');
+  const toggleLabel = instructionsView === 'markdown' ? 'Raw' : 'Markdown';
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-4 md:overflow-hidden">
+      <div className="grid min-h-0 flex-1 gap-3 md:grid-cols-[minmax(0,1fr)_22rem] md:overflow-hidden">
+        <section className="flex min-h-64 flex-col rounded-lg border border-border bg-card-bg p-4 text-text-primary">
+          <div className="mb-3 flex shrink-0 items-center justify-between gap-2">
+            <h2 className="flex items-center gap-1.5 text-sm font-semibold text-text-primary">
+              <Icon name="book-open" className="size-4 text-text-secondary" />
+              Instructions
+            </h2>
+            {instructions ? (
+              <div
+                className="inline-flex h-7 items-stretch overflow-hidden rounded-md border border-border bg-primary-bg text-xs font-medium text-text-secondary"
+                role="group"
+                aria-label="Instructions actions"
+              >
+                <button
+                  type="button"
+                  aria-label={`Show ${toggleLabel}`}
+                  onClick={() => setInstructionsView(view => (view === 'markdown' ? 'raw' : 'markdown'))}
+                  className="cursor-pointer px-2.5 transition-colors hover:bg-ghost-button-hover hover:text-text-primary"
+                >
+                  {toggleLabel}
+                </button>
+                <span className="w-px self-stretch bg-border" aria-hidden />
+                <button
+                  type="button"
+                  title={copied ? 'Copied!' : 'Copy'}
+                  aria-label={copied ? 'Copied!' : 'Copy'}
+                  onClick={() => {
+                    void navigator.clipboard.writeText(instructions).then(() => {
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 2000);
+                    });
+                  }}
+                  className="inline-flex cursor-pointer items-center justify-center px-2 transition-colors hover:bg-ghost-button-hover hover:text-text-primary"
+                >
+                  <Icon name={copied ? 'check' : 'copy'} size={12} />
+                </button>
+              </div>
+            ) : null}
+          </div>
+          <div className="min-h-0 flex-1 overflow-auto">
+            {instructions ? (
+              instructionsView === 'markdown' ? (
+                <Markdown content={instructions} readOnly className="text-sm" />
+              ) : (
+                <pre className="whitespace-pre-wrap break-words font-mono text-sm text-text-primary">
+                  {instructions}
+                </pre>
+              )
+            ) : (
+              <p className="text-sm text-text-secondary">No instructions for this agent.</p>
+            )}
+          </div>
+        </section>
+
+        <aside className="flex min-h-0 min-w-0 flex-col gap-3 md:overflow-auto">
+          {description ? (
+            <AgentOverviewCard title="Description" icon="file">
+              <p className="text-xs text-text-secondary">{description}</p>
+            </AgentOverviewCard>
+          ) : null}
+          <AgentOverviewCard title="Model Configuration" icon="cpu">
+            <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
+              <dt className="text-text-secondary">Model</dt>
+              <dd className={cn(valueClassName, 'truncate')} title={spec.model.name}>
+                {displayModelName(spec.model.name)}
+              </dd>
+              {typeof maxTokens === 'number' ? (
+                <>
+                  <dt className="text-text-secondary">Max tokens</dt>
+                  <dd className={valueClassName}>{maxTokens}</dd>
+                </>
+              ) : null}
+              {spec.model.params?.reasoningEffort !== undefined ? (
+                <>
+                  <dt className="text-text-secondary">Reasoning</dt>
+                  <dd className={valueClassName}>{spec.model.params.reasoningEffort}</dd>
+                </>
+              ) : null}
+              {typeof temperature === 'number' ? (
+                <>
+                  <dt className="text-text-secondary">Temperature</dt>
+                  <dd className={valueClassName}>{temperature}</dd>
+                </>
+              ) : null}
+            </dl>
+          </AgentOverviewCard>
+          <AgentOverviewMcpServers mcpServers={spec.mcpServers} />
+
+          <AgentOverviewCard title="Attached Skills" icon="lightbulb" count={skills.length}>
+            {skills.length === 0 ? (
+              <p className="text-xs text-text-secondary">No skills attached.</p>
+            ) : (
+              <ul className="space-y-1.5">
+                {skills.map((skill, index) => (
+                  <li
+                    key={`${readName(skill) ?? 'skill'}-${index}`}
+                    className="rounded-md bg-secondary-bg px-2 py-1.5 text-xs"
+                  >
+                    {readName(skill) ?? `Skill ${index + 1}`}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </AgentOverviewCard>
+
+          {execution.length > 0 ? (
+            <AgentOverviewCard title="Execution" icon="terminal">
+              <dl className="space-y-1 text-xs">
+                {execution.map(([label, value]) => (
+                  <div key={label} className="flex justify-between gap-3">
+                    <dt className="text-text-secondary">{label}</dt>
+                    <dd className={valueClassName}>{value}</dd>
+                  </div>
+                ))}
+              </dl>
+            </AgentOverviewCard>
+          ) : null}
+
+          {capabilities.length > 0 ? (
+            <AgentOverviewCard title="Capabilities" icon="cube">
+              <dl className="space-y-1 text-xs">
+                {capabilities.map(([label, enabled]) => (
+                  <div key={label} className="flex justify-between gap-3">
+                    <dt className="text-text-secondary">{label}</dt>
+                    <dd className={valueClassName}>{enabled ? 'Enabled' : 'Disabled'}</dd>
+                  </div>
+                ))}
+              </dl>
+            </AgentOverviewCard>
+          ) : null}
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+declare module '../../theme/SlotsProvider.js' {
+  interface AtomSlots {
+    AgentOverview: ComponentType<AgentOverviewProps>;
+  }
+}
